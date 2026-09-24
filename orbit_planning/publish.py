@@ -1,142 +1,203 @@
-"""Compact raw results (results/<model>/<sequence>/pareto.json) into the static
-site payload (docs/data/...). The browser never touches SPICE or 36 MB clouds.
+"""Compact raw results into the static site payload under ``docs/data/``.
 
-Per run it writes docs/data/<model>/<sequence>/cloud.json:
-    cost_label/units          what the trade axis means for this model
-    points[]                  the whole cloud, compact: id, cost, tof, launch,
-                              arrival, pareto flag  (for the scatter)
-    detail{id: describe()}    full mission description + propagatable arcs, only
-                              for selectable points (front + a few dominated per
-                              TOF bin -- the blob is context, not clickable)
-    planets[]                 heliocentric orbit polylines for 3D context
+The browser never touches SPICE or the multi-megabyte raw clouds. Per run this
+writes ``docs/data/<model>/<sequence>/cloud.json``:
 
-and refreshes docs/data/index.json (the gallery manifest).
+    points[]     the whole cloud, compact: id, cost, tof, launch epoch, flags
+                 (``pareto``, ``polished``, ``detail``) -- for the scatter
+    detail{}     ``trajectory.describe()`` for every point flagged ``detail``:
+                 the front, polished points, and a few cheapest dominated
+                 points per time-of-flight bin. The blob is context, not
+                 clickable, so it carries no detail.
+    frames       the constant ECLIPJ2000 -> EME2000 rotation, so the site can
+                 export equatorial states without shipping both frames
+
+plus one shared ``docs/data/planets.json`` (orbit polylines for 3D context,
+identical across runs so stored once) and ``docs/data/index.json``, the
+gallery manifest. Floats are rounded at this boundary: 17-digit tails are
+noise that also gzips badly.
 """
 import argparse
 import json
-from pathlib import Path
 
 import numpy as np
 
 import mission
 import models
+import paths
 import trajectory
 
-DOCS_DATA = (mission.HERE / '..' / 'docs' / 'data').resolve()
+# Decimal places per JSON key; lists inherit the key of their parent.
+_PRECISION = {
+    'r_eclip_m': 0, 'v_eclip_ms': 4, 'vinf_vec_eclip_ms': 4, 'xyz': 0,
+    'epoch_mjd2000': 6, 'dt_days': 6, 'launch_mjd2000': 4,
+    'cost': 3, 'tof_days': 3,
+}
 
 
-def _planet_orbits(sequence, samples=160):
-    """One orbit polyline per distinct body, heliocentric ECLIPJ2000 (metres)."""
-    seen, orbits = set(), []
-    planets, labels = mission.make_sequence(sequence)
-    t0 = mission.LAUNCH_WINDOW[0]
-    for pl, lab in zip(planets, labels):
-        if lab in seen:
+def compact(obj, key=None):
+    """Round every float in a nested structure by its key's precision."""
+    if isinstance(obj, float):
+        return round(obj, _PRECISION.get(key, 4))
+    if isinstance(obj, dict):
+        return {k: compact(v, k) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [compact(v, key) for v in obj]
+    return obj
+
+
+def discover_runs(model_filter=None, sequence_filter=None):
+    """``(model, sequence)`` pairs with a raw ``pareto.json`` and a decodable model.
+
+    Args:
+        model_filter: Model names to keep, or ``None`` for all.
+        sequence_filter: Sequence strings to keep, or ``None`` for all.
+
+    Returns:
+        Sorted list of ``(model, sequence)``. Models without a decoder (nep)
+        are skipped: there is nothing to show for them.
+    """
+    runs = []
+    for raw in sorted(paths.RESULTS_DIR.glob('*/*/pareto.json')):
+        model, sequence = raw.parent.parent.name, raw.parent.name
+        if model not in models.MODELS or models.get(model).decode is None:
             continue
-        seen.add(lab)
-        period_d = mission.orbital_period(pl) / 86400.0
-        xs = []
-        for k in range(samples + 1):
-            r, _ = pl.eph(mission.pk.epoch(t0.mjd2000 + period_d * k / samples, 'mjd2000'))
-            xs.append([float(c) for c in r])
-        orbits.append({'label': lab, 'period_days': period_d, 'xy': xs})
+        if model_filter and model not in model_filter:
+            continue
+        if sequence_filter and sequence not in sequence_filter:
+            continue
+        runs.append((model, sequence))
+    return runs
+
+
+def select_detail(points, per_bin=2, bins=14):
+    """Flag which points get a full description (sets ``detail`` in place).
+
+    All front and polished points, plus the ``per_bin`` cheapest dominated
+    points in each of ``bins`` time-of-flight bins, so a reader can still click
+    into a representative dominated trajectory without the payload carrying a
+    description for every point of the blob.
+
+    Args:
+        points: Compact point records with ``pareto``, ``polished``,
+            ``tof_days`` and ``cost``.
+        per_bin: Dominated points to keep per bin.
+        bins: Number of equal-width time-of-flight bins.
+    """
+    for p in points:
+        p['detail'] = p['pareto'] or p['polished']
+    tofs = np.array([p['tof_days'] for p in points])
+    edges = np.linspace(tofs.min(), tofs.max(), bins + 1)
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        dominated = sorted((p for p in points if lo <= p['tof_days'] <= hi and not p['pareto']),
+                           key=lambda p: p['cost'])
+        for p in dominated[:per_bin]:
+            p['detail'] = True
+
+
+def planet_orbits(labels, samples=160):
+    """One heliocentric orbit polyline per body label, for 3D context.
+
+    Args:
+        labels: Body names to include.
+        samples: Points per orbit (160 keeps Neptune's circle smooth at a few KB).
+
+    Returns:
+        ``{label: {period_days, xyz}}`` with positions in metres, ECLIPJ2000.
+    """
+    letters = {b['label']: letter for letter, b in mission.BODIES.items()}
+    t0 = mission.LAUNCH_WINDOW[0].mjd2000
+    orbits = {}
+    for label in sorted(set(labels)):
+        planet = mission.make_planet(letters[label])
+        period = mission.orbital_period(planet) / 86400.0
+        orbits[label] = dict(period_days=period, xyz=[
+            [float(c) for c in planet.eph(mission.pk.epoch(t0 + period * k / samples, 'mjd2000'))[0]]
+            for k in range(samples + 1)])
     return orbits
 
 
-def _select_detail_ids(points, per_bin=2, bins=14):
-    """Front points (all) + a few cheapest dominated per TOF bin, so a user can
-    click into representative dominated trajectories without exploding the
-    payload."""
-    ids = {p['id'] for p in points if p['pareto']}
-    tofs = np.array([p['tof_days'] for p in points])
-    if len(tofs):
-        edges = np.linspace(tofs.min(), tofs.max(), bins + 1)
-        for b in range(bins):
-            lo, hi = edges[b], edges[b + 1]
-            inb = [p for p in points if lo <= p['tof_days'] <= hi and not p['pareto']]
-            inb.sort(key=lambda p: p['cost'])
-            ids.update(p['id'] for p in inb[:per_bin])
-    return ids
+def publish_run(model_name, sequence):
+    """Compact one raw result into its ``cloud.json``.
 
+    Args:
+        model_name: Model of the run.
+        sequence: Sequence of the run.
 
-def publish_run(model, sequence):
-    raw_path = mission.RESULTS_DIR / model / sequence / 'pareto.json'
-    if not raw_path.is_file():
-        return None
-    raw = json.loads(raw_path.read_text())
-    spec = models.get(model)
+    Returns:
+        The run's ``index.json`` entry.
 
-    points = []
-    for i, p in enumerate(raw['points']):
-        points.append({
-            'id': f"p{i:05d}",
-            'cost': float(p['dv_ms']),
-            'tof_days': float(p['tof_days']),
-            'tof_years': float(p['tof_days']) / 365.25,
-            'launch_mjd2000': float(p['launch_mjd2000']),
-            'arrival_mjd2000': float(p['arrival_mjd2000']),
-            'pareto': bool(p['pareto']),
-            '_x': p['x'],
-        })
+    Raises:
+        ValueError: If the raw file predates the current result schema;
+            re-run ``pareto.py`` for that pair.
+    """
+    raw = json.loads(paths.results_path(model_name, sequence, 'pareto.json').read_text())
+    if raw.get('schema') != paths.RESULT_SCHEMA:
+        raise ValueError(f"result schema {raw.get('schema')} != {paths.RESULT_SCHEMA}")
+    model = models.get(model_name)
+    points = [dict(id=f"p{i:05d}", cost=p['cost'], tof_days=p['tof_days'],
+                   launch_mjd2000=p['launch_mjd2000'], pareto=p['pareto'],
+                   polished=p.get('polished', False), x=p['x'])
+              for i, p in enumerate(raw['points'])]
+    select_detail(points)
 
-    detail_ids = _select_detail_ids(points)
     detail = {}
     for p in points:
-        if p['id'] in detail_ids and p['_x'] is not None:
+        if p['detail']:
             try:
-                detail[p['id']] = trajectory.describe(model, sequence, p['_x'])
-            except Exception as exc:
+                detail[p['id']] = trajectory.describe(model_name, sequence, p['x'])
+            except Exception as exc:  # keep the run publishable if one point fails
                 detail[p['id']] = {'error': str(exc)}
-    for p in points:
-        p.pop('_x', None)
+        del p['x']
+
+    cloud = dict(model=model_name, sequence=sequence, labels=raw['labels'],
+                 cost_label=model.label, cost_units=model.units, blurb=model.blurb,
+                 settings=raw.get('settings', {}),
+                 frames=dict(eclip_to_eme=trajectory.ECLIP_TO_EME.tolist()),
+                 points=points, detail=detail)
+    (paths.docs_run_dir(model_name, sequence) / 'cloud.json').write_text(
+        json.dumps(compact(cloud), separators=(',', ':')))
 
     front = [p for p in points if p['pareto']]
-    best = min(front, key=lambda p: p['cost']) if front else None
-    cloud = {
-        'model': model, 'sequence': sequence,
-        'labels': mission.make_sequence(sequence)[1],
-        'cost_label': spec['label'], 'cost_units': spec['units'],
-        'blurb': spec['blurb'],
-        'settings': raw.get('settings', {}),
-        'points': points,
-        'detail': detail,
-        'planets': _planet_orbits(sequence),
-    }
-    outdir = DOCS_DATA / model / sequence
-    outdir.mkdir(parents=True, exist_ok=True)
-    (outdir / 'cloud.json').write_text(json.dumps(cloud, separators=(',', ':')))
-
-    return {
-        'model': model, 'sequence': sequence,
-        'labels': cloud['labels'],
-        'cost_label': spec['label'], 'cost_units': spec['units'],
-        'n_points': len(points), 'n_front': len(front), 'n_detail': len(detail),
-        'best_cost': best['cost'] if best else None,
-        'best_tof_years': best['tof_years'] if best else None,
-        'path': f"data/{model}/{sequence}/cloud.json",
-    }
+    best = min(front, key=lambda p: p['cost'])
+    return dict(model=model_name, sequence=sequence, labels=raw['labels'],
+                cost_label=model.label, cost_units=model.units,
+                n_points=len(points), n_front=len(front), n_detail=len(detail),
+                best_cost=best['cost'], best_tof_years=best['tof_days'] / 365.25,
+                path=f"data/{model_name}/{sequence}/cloud.json")
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('--models', default='capture,ballistic')
-    ap.add_argument('--sequences', default='EVEEJN,EVEJN,EVJN,EVVEJN,EJN')
-    args = ap.parse_args()
+    """CLI: publish every discovered run (optionally filtered) and the manifests."""
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--models', default=None, help='comma list; default: every run found')
+    parser.add_argument('--sequences', default=None, help='comma list; default: every run found')
+    args = parser.parse_args()
 
-    DOCS_DATA.mkdir(parents=True, exist_ok=True)
+    runs = discover_runs(paths.csv_list(args.models) if args.models else None,
+                         paths.csv_list(args.sequences, upper=True) if args.sequences else None)
+    if not runs:
+        print(f"no results under {paths.RESULTS_DIR}; run batch.py or pareto.py first")
+        return
+
     index = []
-    for m in [x.strip() for x in args.models.split(',') if x.strip()]:
-        for s in [x.strip().upper() for x in args.sequences.split(',') if x.strip()]:
-            summary = publish_run(m, s)
-            if summary:
-                index.append(summary)
-                print(f"published {m}/{s}: {summary['n_points']} pts, "
-                      f"{summary['n_front']} front, {summary['n_detail']} detailed, "
-                      f"best {summary['best_cost']:.0f} {summary['cost_units']}")
-            else:
-                print(f"skip {m}/{s}: no results")
-    (DOCS_DATA / 'index.json').write_text(json.dumps(index, indent=2))
-    print(f"\nwrote {DOCS_DATA / 'index.json'} ({len(index)} runs)")
+    for model_name, sequence in runs:
+        try:
+            entry = publish_run(model_name, sequence)
+        except ValueError as exc:
+            print(f"skip {model_name}/{sequence}: {exc}; re-run pareto.py for it")
+            continue
+        index.append(entry)
+        print(f"published {model_name}/{sequence}: {entry['n_points']} pts, {entry['n_front']} front, "
+              f"{entry['n_detail']} detailed, best {entry['best_cost']:.0f} {entry['cost_units']}")
+
+    paths.DOCS_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    labels = {label for entry in index for label in entry['labels']}
+    (paths.DOCS_DATA_DIR / 'planets.json').write_text(
+        json.dumps(compact(planet_orbits(labels)), separators=(',', ':')))
+    (paths.DOCS_DATA_DIR / 'index.json').write_text(json.dumps(index, indent=2))
+    print(f"\nwrote index.json ({len(index)} runs) and planets.json ({len(labels)} bodies)")
 
 
 if __name__ == '__main__':

@@ -1,64 +1,82 @@
 # Kyurem — Neptune multiple-gravity-assist trajectory explorer
 
-Searches Earth→Neptune gravity-assist trajectories across many flyby sequences
-and three propulsion/objective models, then publishes them as a browsable static
-site where each trajectory can be inspected in 3D and exported for GMAT/STK.
+Searches Earth→Neptune gravity-assist trajectories across flyby sequences and
+propulsion models with pykep/pygmo, then publishes them as a static site where
+every trajectory can be inspected in 3D and exported for GMAT/STK.
 
 ## Setup
 
 ```bash
 conda env create -f environment.yml      # creates orbital_env
 conda activate orbital_env
-scripts/fetch_kernels.sh                  # downloads SPICE kernels into data/ (~225 MB)
+scripts/fetch_kernels.sh                  # SPICE kernels into data/ (~225 MB, gitignored)
 ```
-
-Kernels and raw results are gitignored; the site payload under `docs/data/` is
-committed.
-
-## Models (`--model`)
-
-| model | what | cost axis |
-|-------|------|-----------|
-| `capture`   | mga_1dsm + orbit insertion (e=0.99 ellipse) | DSMs + capture burn (m/s) |
-| `ballistic` | Trident-style: gravity assists only, flyby arrival | departure C3 Δv (m/s) |
-| `nep`       | 40 kWe nuclear-electric — **seed exporter, not optimiser** | (export a `ballistic`/`capture` GMAT seed and convert to a finite/EP burn in GMAT) |
-
-Sequences are strings, Earth→Neptune: `EVEEJN`, `EVEJN`, `EVJN`, `EVVEJN`, `EJN`, …
 
 ## Pipeline
 
 ```bash
-# 1. search — one Pareto sweep per (model, sequence) into results/<model>/<sequence>/
+# 1. search: the cost / time-of-flight front per (model, sequence) -> results/<model>/<sequence>/
 python orbit_planning/batch.py --models capture,ballistic \
-    --sequences EVEEJN,EVEJN,EVJN,EVVEJN,EJN --sweep
+    --sequences EVEEJN,EVEJN,EVJN,EVVEJN,EJN --sweep --polish 24
+#    (anything batch.py does not recognise is forwarded to pareto.py)
 
-# 2. publish — compact raw results into docs/data/ (the site payload)
-python orbit_planning/publish.py --models capture,ballistic \
-    --sequences EVEEJN,EVEJN,EVJN,EVVEJN,EJN
+# 2. publish: compact every run found under results/ into docs/data/
+python orbit_planning/publish.py
 
-# 3. view — any static server; GitHub Pages serves docs/ directly
-python -m http.server -d docs 8899   # then open localhost:8899
+# 3. view: any static server; GitHub Pages serves docs/ directly
+python -m http.server -d docs 8899
 ```
 
 Single runs: `python orbit_planning/optimize.py --model ballistic --sequence EJN`
-(best-of), or `pareto.py` (full front). Both take `--sweep` to partition the
-launch window by synodic period.
+finds the one cheapest trajectory (its `champion.json` feeds the notebook, not
+the site); `pareto.py` finds the whole front, which is what gets published.
+Both take `--sweep` (one search per synodic launch slice) and `--help`.
+
+## Models (`--model`)
+
+| model | pykep problem | cost axis |
+|-------|---------------|-----------|
+| `capture`   | mga_1dsm + insertion into an e=0.99 ellipse | deep-space maneuvers + capture burn (m/s) |
+| `ballistic` | mga, gravity assists only, flyby arrival     | departure Δv beyond the launch allowance (m/s) |
+| `nep`       | mga_lt_nep, 40 kWe nuclear-electric          | builds and runs but is not decoded or published; the NEP path is "export a `ballistic`/`capture` GMAT seed and convert the impulses to finite burns in GMAT" |
+
+Sequences are strings over the body registry (`V E M J S N`), Earth first,
+destination last: `EVEEJN`, `EVEJN`, `EVJN`, `EVVEJN`, `EJN`, …
 
 ## Layout
 
-- `orbit_planning/mission.py` — kernels, body registry, launch-window slicing
-- `orbit_planning/models.py` — the three models + a crash-safe fitness wrapper
-- `orbit_planning/optimize.py` / `pareto.py` — single-objective / Pareto search
-- `orbit_planning/trajectory.py` — decode x → mission table, arc states, exports
-- `orbit_planning/batch.py` / `publish.py` — run many, compact for the site
-- `docs/` — the static site (Plotly vendored, in-browser Kepler propagator)
+| file | role |
+|------|------|
+| `orbit_planning/paths.py`       | filesystem layout + default matrix (kernel-free) |
+| `orbit_planning/mission.py`     | SPICE kernels, body registry, sequences, launch-window slicing |
+| `orbit_planning/models.py`      | the models: build / decode / cost / objective, and `problem()` |
+| `orbit_planning/search.py`      | archipelago, MBH polish, parallel polish pool, shared CLI |
+| `orbit_planning/optimize.py`    | single-objective search (+ `--sweep`) |
+| `orbit_planning/pareto.py`      | NSGA-II front (+ `--sweep`, `--polish`) |
+| `orbit_planning/trajectory.py`  | decision vector → mission description with arc states |
+| `orbit_planning/batch.py`       | run many pairs, resumable |
+| `orbit_planning/publish.py`     | raw results → `docs/data/` |
+| `orbit_planning/porkchop.py`    | static PNG of one run's cloud |
+| `orbit_planning/slingshot_planning.py` | notebook for poking at one champion |
+| `docs/`                         | the site: `common.js`, `run.js`, `gallery.js`, `kepler.js` |
 
-## Notes
+## Design notes
 
-- Every `evolve()` lives behind `if __name__ == '__main__'` in a script, never a
-  notebook cell: pygmo drives these via mp_island → multiprocessing spawn, which
-  re-imports `__main__`.
-- The browser reproduces trajectories from arc states with a universal-variable
-  Kepler propagator (`docs/kepler.js`), validated against pykep to machine
-  precision — no server, no kernels needed to view.
-- Arc states are exported in ECLIPJ2000 **and** J2000 (EME2000) for GMAT/STK.
+- **Front polish.** Raw NSGA-II fronts run 10–50 % high. `pareto.py` MBH-polishes
+  a time-of-flight-spanning sub-sample of the front (epsilon-constraint: each
+  point pinned to its own launch date and flight time), appends the results and
+  recomputes dominance over the union.
+- **Spawn guard.** pygmo drives these Python problems via mp_island, which forces
+  multiprocessing *spawn*; spawn re-imports `__main__`, so every search lives in
+  a script behind `if __name__ == '__main__'`, never in a notebook cell.
+- **Kernels at import.** A pickled `planet.spice` resolves against the *child's*
+  kernel pool, so `mission.py` loads kernels on import; every worker gets them.
+- **Decision vectors.** `x[0]` is the launch epoch (MJD2000) for every model and
+  is the only gene read outside `models.py`; the per-model layouts are
+  documented at the top of that file and reached through `Model.decode`.
+- **Result files** carry `schema: 2`; `publish.py` skips anything older.
+- **In-browser propagation.** The site receives arc states (r, v, Δt, μ) and
+  rebuilds trajectories with a universal-variable Kepler propagator
+  (`docs/kepler.js`, validated against pykep to machine precision). No server.
+- **Exports** (CSV of arc states in ecliptic and equatorial J2000, GMAT seed) are
+  generated client-side from the published description.

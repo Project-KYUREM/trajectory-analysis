@@ -1,13 +1,13 @@
-"""Run the Pareto search across many (model, sequence) pairs into
-results/<model>/<sequence>/pareto.json.
+"""Run ``pareto.py`` over a matrix of (model, sequence) pairs.
 
     python orbit_planning/batch.py --models capture,ballistic \
-        --sequences EVEEJN,EVEJN,EVJN,EVVEJN,EJN --sweep
+        --sequences EVEEJN,EVEJN --sweep --polish 24 --islands 20
 
-Resumable: a pair whose pareto.json already exists is skipped unless --force.
-Each pair is a separate process (the mp_island/spawn guard lives in pareto.py),
-so this driver just shells out and tallies. NEP is intentionally excluded --
-it is a GMAT seed exporter, not an optimiser (see PLAN.md).
+Every option this script does not recognise is forwarded to ``pareto.py``
+unchanged, so the batch owns only the matrix, skipping and tallying.
+Resumable: a pair whose ``pareto.json`` already exists is skipped unless
+``--force``. Each pair is its own process (the mp_island / spawn guard lives
+in ``pareto.py``). This module stays kernel-free on purpose.
 """
 import argparse
 import subprocess
@@ -15,51 +15,39 @@ import sys
 import time
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+import paths
+
+PARETO = Path(__file__).resolve().with_name('pareto.py')
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('--models', default='capture,ballistic')
-    ap.add_argument('--sequences', default='EVEEJN,EVEJN,EVJN,EVVEJN,EJN')
-    ap.add_argument('--sweep', action='store_true')
-    ap.add_argument('--islands', type=int, default=20)
-    ap.add_argument('--pop', type=int, default=100)
-    ap.add_argument('--gen', type=int, default=200)
-    ap.add_argument('--rounds', type=int, default=10)
-    ap.add_argument('--force', action='store_true', help='rerun even if results exist')
-    args = ap.parse_args()
+    """CLI: run pareto.py for each (model, sequence) pair not yet done."""
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter,
+                                     epilog='unrecognised options are forwarded to pareto.py')
+    parser.add_argument('--models', default=','.join(paths.DEFAULT_MODELS))
+    parser.add_argument('--sequences', default=','.join(paths.DEFAULT_SEQUENCES))
+    parser.add_argument('--force', action='store_true', help='rerun pairs that already have results')
+    args, forwarded = parser.parse_known_args()
 
-    models = [m.strip() for m in args.models.split(',') if m.strip()]
-    seqs = [s.strip().upper() for s in args.sequences.split(',') if s.strip()]
-    pairs = [(m, s) for m in models for s in seqs]
-    print(f"batch: {len(pairs)} (model, sequence) pairs\n")
+    pairs = [(m, s) for m in paths.csv_list(args.models)
+             for s in paths.csv_list(args.sequences, upper=True)]
+    print(f"batch: {len(pairs)} (model, sequence) pairs; forwarding {forwarded or 'nothing'}\n")
 
-    t_all = time.time()
-    done = 0
-    for m, s in pairs:
-        out = HERE / '..' / 'results' / m / s / 'pareto.json'
-        out = out.resolve()
-        if out.is_file() and not args.force:
-            print(f"  skip {m}/{s} (exists)")
+    t_all, done = time.time(), 0
+    for model, sequence in pairs:
+        if paths.results_path(model, sequence, 'pareto.json').is_file() and not args.force:
+            print(f"  skip {model}/{sequence} (exists)")
             continue
-        cmd = [sys.executable, str(HERE / 'pareto.py'),
-               '--model', m, '--sequence', s,
-               '--islands', str(args.islands), '--pop', str(args.pop),
-               '--gen', str(args.gen), '--rounds', str(args.rounds)]
-        if args.sweep:
-            cmd.append('--sweep')
-        print(f"  run  {m}/{s} ...", flush=True)
-        t = time.time()
-        r = subprocess.run(cmd, capture_output=True, text=True)
-        if r.returncode != 0:
-            print(f"       FAILED ({time.time() - t:.0f}s):\n"
-                  + "\n".join('       ' + ln for ln in r.stderr.splitlines()[-6:]))
-            continue
-        tail = [ln for ln in r.stdout.splitlines() if 'front' in ln or 'wrote' in ln]
-        print(f"       ok ({time.time() - t:.0f}s)  " + (tail[-1].strip() if tail else ''))
-        done += 1
-
+        print(f"\n===== {model}/{sequence} =====", flush=True)
+        t0 = time.time()
+        # Output streams straight through: a swept run takes an hour and its
+        # per-slice progress is the only sign of life.
+        result = subprocess.run([sys.executable, str(PARETO), '--model', model,
+                                 '--sequence', sequence, *forwarded])
+        status = 'ok' if result.returncode == 0 else f'FAILED (exit {result.returncode})'
+        print(f"===== {model}/{sequence}: {status} in {time.time() - t0:.0f}s =====", flush=True)
+        done += result.returncode == 0
     print(f"\nbatch done: {done}/{len(pairs)} run in {(time.time() - t_all) / 60:.1f} min")
 
 

@@ -1,20 +1,26 @@
-"""Decode a decision vector into a full, tool-agnostic mission description.
+"""Decode a decision vector into a tool-agnostic mission description.
 
-One `describe(model, sequence, x)` returns the same schema for every impulsive
-model, so the publish step, the exports, and the site never branch on model:
+``describe(model, sequence, x)`` returns one schema for every decodable model,
+so the publish step and the site never branch on model:
 
-    launch   epoch, C3, vinf vector, RLA/DLA (EME2000) -- launch-vehicle inputs
-    legs     per-leg TOF, dates, DSM magnitude
-    flybys   body, epoch, periapsis radius (capture) / turn (ballistic)
-    arrival  Neptune epoch, vinf vector & magnitude (the "velocity entering
-             Neptune"), capture burn if the model does insertion
-    arcs     per ballistic arc: r, v, dt, mu  -> a Kepler propagator (browser or
-             GMAT) reproduces the whole trajectory from these alone
-    totals   headline cost, TOF, DSM sum
+    launch    epoch, C3, vinf vector, launch-asymptote RA/dec (EME2000)
+    legs      per-leg time of flight, dates, deep-space maneuver (if the
+              model has them)
+    flybys    body, epoch, periapsis radius and plane angle where the model
+              exposes them, and for the ballistic model the velocity
+              mismatch a burn must cover because the assist cannot
+    arrival   destination epoch, vinf vector and magnitude (the approach speed
+              far from the body), capture burn if the model inserts, and the
+              atmospheric entry speed once gravity has done its work
+    arcs      per ballistic arc: r, v, dt, mu -- a Kepler propagator (the
+              browser's ``kepler.js`` or GMAT) rebuilds the whole trajectory
+              from these alone
+    totals    headline cost, time of flight, maneuver sum
 
-States are given in ECLIPJ2000 (pykep's native frame, heliocentric) AND J2000 /
-EME2000 (what GMAT and STK default to); the two differ by the 23.4393 deg
-obliquity rotation.
+States are heliocentric ECLIPJ2000 (pykep's frame). The constant
+ECLIPJ2000 -> J2000/EME2000 rotation is exported by ``publish.py`` so the site
+can produce the equatorial frame GMAT and STK default to; the CSV and GMAT
+exports themselves are generated client-side from this description.
 """
 import math
 
@@ -24,234 +30,115 @@ import spiceypy as spice
 import mission
 import models
 
-# Constant ECLIPJ2000 -> J2000 (EME2000) rotation (both inertial; time-invariant).
-_R_ECLIP_TO_EME = np.array(spice.pxform('ECLIPJ2000', 'J2000', 0.0))
+# Both frames are inertial, so the rotation is time-invariant (23.4393 deg obliquity).
+ECLIP_TO_EME = np.array(spice.pxform('ECLIPJ2000', 'J2000', 0.0))
 
 
-# Neptune atmospheric entry: gravity accelerates an arriving spacecraft far
-# past its v_inf. Entry speed = sqrt(v_inf^2 + 2*mu/r) at the entry interface,
-# taken ~1000 km above the 1-bar radius. Even v_inf=0 gives the escape-speed
-# floor (~23 km/s) -- you cannot arrive slowly at a giant planet.
-NEPTUNE_ENTRY_INTERFACE_M = mission.R_NEPTUNE + 1000e3
-
-
-def neptune_entry_speed(vinf_ms):
-    return math.sqrt(vinf_ms ** 2 + 2 * mission.MU_NEPTUNE / NEPTUNE_ENTRY_INTERFACE_M)
-
-
-def _to_eme(vec):
-    return list(_R_ECLIP_TO_EME @ np.asarray(vec, dtype=float))
-
-
-def _norm(v):
-    return float(np.linalg.norm(v))
+def to_eme(vec):
+    """Rotate an ECLIPJ2000 vector into J2000 / EME2000."""
+    return [float(c) for c in ECLIP_TO_EME @ np.asarray(vec, dtype=float)]
 
 
 def _ra_dec(vec):
-    """Right ascension / declination (deg) of a vector, for launch asymptote."""
+    """Right ascension and declination (degrees) of a direction vector."""
     x, y, z = vec
-    ra = math.degrees(math.atan2(y, x)) % 360.0
-    dec = math.degrees(math.asin(z / _norm(vec)))
-    return ra, dec
+    return (math.degrees(math.atan2(y, x)) % 360.0,
+            math.degrees(math.asin(z / float(np.linalg.norm(vec)))))
 
 
 def _date(mjd2000):
+    """ISO date-time string for an MJD2000 epoch."""
     return mission.mjd2000_to_datetime(mjd2000).isoformat(timespec='seconds')
 
 
-def _arc_records(ballistic_legs, ballistic_ep, tof_days, mu):
-    """Turn pykep's (r, v) arc starts + epochs into propagatable arc records.
+def entry_speed(vinf_ms, body, planet):
+    """Speed at the atmospheric entry interface after falling into the well.
 
-    dt of each arc is the gap to the next arc start; the final arc runs to the
-    end of the last leg.
+    ``sqrt(vinf^2 + 2*mu/r)``: even ``vinf = 0`` gives the local escape speed
+    (~23 km/s at Neptune) -- one cannot arrive slowly at a giant planet.
+
+    Args:
+        vinf_ms: Hyperbolic excess speed on arrival, m/s.
+        body: The destination's ``BODIES`` entry (radius, entry altitude).
+        planet: The destination's pykep planet (its GM).
+
+    Returns:
+        Entry speed in m/s.
     """
-    arcs = []
-    eps = list(ballistic_ep) + [ballistic_ep[0] + sum(tof_days)]
-    for i, (r, v) in enumerate(ballistic_legs):
-        dt = (eps[i + 1] - eps[i]) * 86400.0
-        arcs.append({
-            'epoch_mjd2000': float(eps[i]),
-            'date': _date(eps[i]),
-            'dt_days': (eps[i + 1] - eps[i]),
-            'mu': mu,
-            'r_eclip_m': [float(c) for c in r],
-            'v_eclip_ms': [float(c) for c in v],
-            'r_eme_m': _to_eme(r),
-            'v_eme_ms': _to_eme(v),
-        })
-    return arcs
+    r = body['radius'] + body['entry_altitude_m']
+    return math.sqrt(vinf_ms ** 2 + 2.0 * planet.mu_self / r)
 
 
-def describe(model, sequence, x):
-    spec = models.get(model)
-    if not spec['impulsive']:
-        raise NotImplementedError(
-            f"describe() covers impulsive models; {model!r} is a NEP seed "
-            f"(see trajectory.nep_seed / export).")
+def describe(model_name, sequence, x):
+    """Decode one trajectory into the schema documented at the top of this module.
 
-    udp = models.build(model, sequence, multi_objective=False)
-    planets, labels = mission.make_sequence(sequence)
-    mu = mission.pk.MU_SUN
-    t0 = x[0]
+    Args:
+        model_name: A decodable model (``capture`` or ``ballistic``).
+        sequence: Sequence string the vector was optimised for.
+        x: The decision vector.
 
-    # planet states at each encounter
-    ep = np.cumsum([t0] + list(_leg_tofs(udp, x)))
-    r_P, v_P = [], []
-    for i, pl in enumerate(planets):
-        r, v = pl.eph(float(ep[i]))
-        r_P.append(r)
-        v_P.append(v)
+    Returns:
+        A JSON-serialisable dict; see the module docstring for its sections.
 
-    if model == 'capture':
-        DV, lamberts, T, bleg, bep = udp._compute_dvs(x)
-        dsm = [float(d) for d in DV[:-1]]
-        arrival_term = float(DV[-1])          # capture burn
-        v_arr = lamberts[-1].get_v2()[0]
-        v_dep = bleg[0][1]
-        cost = spec['cost_of'](udp.fitness(x))
-        capture_dv = arrival_term
-    else:  # ballistic
-        DVlaunch, DVfb, DVarrival, lamberts, DVl_tot, T, bleg, bep = udp._compute_dvs(x)
-        dsm = [float(d) for d in DVfb]        # flyby mismatch (ideally ~0)
-        arrival_term = float(DVarrival)
-        v_arr = lamberts[-1].get_v2()[0]
-        v_dep = bleg[0][1]
-        cost = spec['cost_of'](udp.fitness(x))
-        capture_dv = arrival_term if udp.orbit_insertion else None
+    Raises:
+        NotImplementedError: If the model has no decoder (``nep``).
+    """
+    model = models.get(model_name)
+    if model.decode is None:
+        raise NotImplementedError(f"{model_name!r} is not decodable; it is a GMAT-seed model")
 
-    # departure
-    vinf_dep = [a - b for a, b in zip(v_dep, v_P[0])]
-    vinf_dep_eme = _to_eme(vinf_dep)
-    rla, dla = _ra_dec(vinf_dep_eme)
-    vinf_dep_mag = _norm(vinf_dep)
+    setup = mission.resolve_bounds(sequence)
+    udp = model.build(setup, False)
+    decoded = model.decode(udp, x)
+    cost = model.cost_of(udp.fitness(x))
 
-    # arrival at Neptune
-    vinf_arr = [a - b for a, b in zip(v_arr, v_P[-1])]
-    vinf_arr_mag = _norm(vinf_arr)
+    epochs = np.cumsum([x[0]] + decoded.leg_tof_days)
+    body_v = [planet.eph(float(e))[1] for planet, e in zip(setup.planets, epochs)]
+    vinf_dep = [a - b for a, b in zip(decoded.arc_states[0][1], body_v[0])]
+    vinf_arr = [a - b for a, b in zip(decoded.lamberts[-1].get_v2()[0], body_v[-1])]
+    vinf_dep_mag = float(np.linalg.norm(vinf_dep))
+    vinf_arr_mag = float(np.linalg.norm(vinf_arr))
+    rla, dla = _ra_dec(to_eme(vinf_dep))
+    total_tof = float(sum(decoded.leg_tof_days))
 
-    total_tof = float(sum(T))
-
-    legs = []
-    for i in range(len(T)):
-        legs.append({
-            'from': labels[i], 'to': labels[i + 1],
-            'tof_days': float(T[i]),
-            'dep_date': _date(ep[i]), 'arr_date': _date(ep[i + 1]),
-            'dsm_ms': dsm[i] if i < len(dsm) else None,
-        })
+    legs = [dict(**{'from': setup.labels[i], 'to': setup.labels[i + 1]},
+                 tof_days=tof, dep_date=_date(epochs[i]), arr_date=_date(epochs[i + 1]),
+                 dsm_ms=decoded.leg_dsm_ms[i] if decoded.leg_dsm_ms else None)
+            for i, tof in enumerate(decoded.leg_tof_days)]
 
     flybys = []
-    for i in range(1, len(planets) - 1):
-        fb = {'body': labels[i], 'epoch_mjd2000': float(ep[i]), 'date': _date(ep[i])}
-        if model == 'capture':
-            # x layout: [t0,u,v,Vinf,eta1,a1] + [beta, rp/rP, eta2, a2]*(n-1)
-            fb['rp_radii'] = float(x[7 + 4 * (i - 1)])
-            fb['rp_m'] = fb['rp_radii'] * planets[i].radius
-            fb['beta_rad'] = float(x[6 + 4 * (i - 1)])
-        flybys.append(fb)
+    for i in range(1, len(setup.planets) - 1):
+        flyby = dict(body=setup.labels[i], epoch_mjd2000=float(epochs[i]), date=_date(epochs[i]))
+        if decoded.flyby_mismatch_ms:
+            flyby['mismatch_dv_ms'] = decoded.flyby_mismatch_ms[i - 1]
+        if decoded.flyby_rp_radii is not None:
+            flyby['rp_radii'] = decoded.flyby_rp_radii[i - 1]
+            flyby['rp_m'] = flyby['rp_radii'] * setup.planets[i].radius
+            flyby['beta_rad'] = decoded.flyby_beta_rad[i - 1]
+        flybys.append(flyby)
+
+    arc_ends = list(decoded.arc_epochs[1:]) + [float(epochs[-1])]
+    arcs = [dict(epoch_mjd2000=t, date=_date(t), dt_days=t_end - t, mu=mission.pk.MU_SUN,
+                 r_eclip_m=[float(c) for c in r], v_eclip_ms=[float(c) for c in v])
+            for (r, v), t, t_end in zip(decoded.arc_states, decoded.arc_epochs, arc_ends)]
 
     return {
-        'model': model, 'sequence': sequence, 'labels': labels,
-        'cost': cost, 'cost_label': spec['label'], 'cost_units': spec['units'],
-        'launch': {
-            'epoch_mjd2000': float(t0), 'date': _date(t0),
-            'vinf_ms': vinf_dep_mag,
-            'c3_km2s2': (vinf_dep_mag / 1000.0) ** 2,
-            'vinf_vec_eclip_ms': [float(c) for c in vinf_dep],
-            'vinf_vec_eme_ms': vinf_dep_eme,
-            'rla_deg': rla, 'dla_deg': dla,
-        },
+        'cost': cost,
+        'launch': dict(epoch_mjd2000=float(x[0]), date=_date(x[0]),
+                       vinf_ms=vinf_dep_mag, c3_km2s2=(vinf_dep_mag / 1000.0) ** 2,
+                       vinf_vec_eclip_ms=[float(c) for c in vinf_dep],
+                       rla_deg=rla, dla_deg=dla),
         'legs': legs,
         'flybys': flybys,
-        'arrival': {
-            'epoch_mjd2000': float(ep[-1]), 'date': _date(ep[-1]),
-            'vinf_ms': vinf_arr_mag,
-            'vinf_vec_eclip_ms': [float(c) for c in vinf_arr],
-            'vinf_vec_eme_ms': _to_eme(vinf_arr),
-            'capture_dv_ms': capture_dv,
-            'entry_speed_ms': neptune_entry_speed(vinf_arr_mag),
-            'entry_interface_km': NEPTUNE_ENTRY_INTERFACE_M / 1e3,
-        },
-        'totals': {
-            'cost': cost, 'cost_units': spec['units'],
-            'tof_days': total_tof, 'tof_years': total_tof / 365.25,
-            'dsm_total_ms': float(sum(dsm)),
-        },
-        'arcs': _arc_records(bleg, bep, T, mu),
+        'arrival': dict(body=setup.labels[-1], epoch_mjd2000=float(epochs[-1]),
+                        date=_date(epochs[-1]), vinf_ms=vinf_arr_mag,
+                        vinf_vec_eclip_ms=[float(c) for c in vinf_arr],
+                        capture_dv_ms=decoded.capture_dv_ms,
+                        entry_speed_ms=entry_speed(vinf_arr_mag, setup.destination,
+                                                   setup.planets[-1]),
+                        entry_altitude_km=setup.destination['entry_altitude_m'] / 1e3),
+        'totals': dict(cost=cost, tof_days=total_tof, tof_years=total_tof / 365.25,
+                       dsm_total_ms=float(sum(decoded.leg_dsm_ms)),
+                       flyby_mismatch_total_ms=float(sum(decoded.flyby_mismatch_ms))),
+        'arcs': arcs,
     }
-
-
-def _leg_tofs(udp, x):
-    """Per-leg TOF (days) for either impulsive model."""
-    if hasattr(udp, '_decode_tofs'):          # mga (ballistic)
-        return list(udp._decode_tofs(x))
-    return list(udp._compute_dvs(x)[2])        # mga_1dsm (capture)
-
-
-# ----------------------------------------------------------------- exports --
-def maneuvers(desc):
-    """Flat maneuver list (epoch, kind, dv) for CSV/GMAT: launch, DSMs, capture."""
-    rows = [{'epoch_mjd2000': desc['launch']['epoch_mjd2000'],
-             'date': desc['launch']['date'], 'kind': 'launch',
-             'dv_ms': desc['launch']['vinf_ms'],
-             'note': f"C3={desc['launch']['c3_km2s2']:.3f} km2/s2 "
-                     f"RLA={desc['launch']['rla_deg']:.2f} DLA={desc['launch']['dla_deg']:.2f}"}]
-    for i, leg in enumerate(desc['legs']):
-        if leg.get('dsm_ms'):
-            rows.append({'epoch_mjd2000': None, 'date': leg['arr_date'],
-                         'kind': f"dsm_leg{i + 1}", 'dv_ms': leg['dsm_ms'],
-                         'note': f"{leg['from']}->{leg['to']}"})
-    if desc['arrival'].get('capture_dv_ms'):
-        rows.append({'epoch_mjd2000': desc['arrival']['epoch_mjd2000'],
-                     'date': desc['arrival']['date'], 'kind': 'neptune_capture',
-                     'dv_ms': desc['arrival']['capture_dv_ms'],
-                     'note': f"arrival vinf={desc['arrival']['vinf_ms']:.1f} m/s"})
-    return rows
-
-
-def to_states_csv(desc):
-    """CSV of every ballistic-arc initial state in both frames -- the handoff
-    a GMAT/STK user pastes in and re-propagates."""
-    lines = ["arc,epoch_mjd2000,date,dt_days,mu_m3s2,"
-             "x_eclip_m,y_eclip_m,z_eclip_m,vx_eclip_ms,vy_eclip_ms,vz_eclip_ms,"
-             "x_eme_m,y_eme_m,z_eme_m,vx_eme_ms,vy_eme_ms,vz_eme_ms"]
-    for i, a in enumerate(desc['arcs']):
-        r_e, v_e, r_m, v_m = a['r_eclip_m'], a['v_eclip_ms'], a['r_eme_m'], a['v_eme_ms']
-        lines.append(",".join(str(v) for v in
-                     [i, a['epoch_mjd2000'], a['date'], a['dt_days'], a['mu'],
-                      *r_e, *v_e, *r_m, *v_m]))
-    return "\n".join(lines) + "\n"
-
-
-def to_gmat_seed(desc):
-    """A GMAT-oriented seed summary: the departure state (EME2000, what GMAT's
-    default coordinate system uses) plus maneuver epochs and the flyby targets.
-    This is the starting point for converting to a finite/low-thrust burn: drop
-    it into a GMAT mission, replace each impulsive Maneuver with a finite burn
-    at the same epoch, and re-target the flybys. See PLAN.md / the NEP note."""
-    dep = desc['arcs'][0]
-    lines = [
-        f"% GMAT seed  --  {desc['model']} {desc['sequence']}",
-        f"% cost {desc['cost']:.1f} {desc['cost_units']}  "
-        f"TOF {desc['totals']['tof_years']:.2f} yr",
-        f"% Launch {desc['launch']['date']}  C3 {desc['launch']['c3_km2s2']:.4f} km^2/s^2",
-        f"%   RLA {desc['launch']['rla_deg']:.3f} deg   DLA {desc['launch']['dla_deg']:.3f} deg",
-        "% Heliocentric departure state, EME2000 (J2000), metres & m/s:",
-        f"%   X  = {dep['r_eme_m'][0]:.3f}",
-        f"%   Y  = {dep['r_eme_m'][1]:.3f}",
-        f"%   Z  = {dep['r_eme_m'][2]:.3f}",
-        f"%   VX = {dep['v_eme_ms'][0]:.6f}",
-        f"%   VY = {dep['v_eme_ms'][1]:.6f}",
-        f"%   VZ = {dep['v_eme_ms'][2]:.6f}",
-        "% Encounter sequence and epochs:",
-    ]
-    for f in desc['flybys']:
-        rp = f.get('rp_m')
-        lines.append(f"%   {f['body']:8s} {f['date']}" +
-                     (f"   rp = {rp / 1e3:.1f} km" if rp else ""))
-    lines.append(f"%   Neptune  {desc['arrival']['date']}   "
-                 f"vinf = {desc['arrival']['vinf_ms']:.1f} m/s")
-    lines.append("% Maneuvers to model as finite/EP burns:")
-    for mv in maneuvers(desc):
-        lines.append(f"%   {mv['kind']:16s} dv = {mv['dv_ms']:8.1f} m/s   {mv['note']}")
-    return "\n".join(lines) + "\n"

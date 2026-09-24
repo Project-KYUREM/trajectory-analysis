@@ -1,187 +1,197 @@
-"""Multi-objective (DV vs time-of-flight) search over the EVEEJN sequence.
+"""Multi-objective search: the cost / time-of-flight front for one model and sequence.
 
-Run as a script, not from a cell -- same mp_island/spawn reason as optimize.py:
+    python orbit_planning/pareto.py --model capture --sequence EVEEJN --sweep
 
-    python orbit_planning/pareto.py --islands 8 --rounds 10
+Single-objective optimisation returns one arbitrary point on the trade;
+NSGA-II returns the whole front, which is what the site's porkchop samples.
+Every individual from every island is kept, not just the front: the plot wants
+the cloud, and dominance is a flag, not a filter.
 
-Single-objective optimisation returns one arbitrary point on the DV/TOF trade.
-NSGA-II returns the whole front, which is what the porkchop plot samples.
-
-Writes every individual from every island's final population, not just the
-champions: the porkchop wants the cloud, and the non-dominated subset is
-flagged rather than filtered so the plot can show what was dominated too.
+Raw NSGA-II fronts run high (it spreads well but stalls short of each local
+optimum), so a TOF-spanning sub-sample of the front is MBH-polished afterwards
+and dominance is recomputed over the union. Run as a script, never from a
+notebook cell -- see ``optimize.py`` for why.
 """
 import argparse
 import json
-import sys
 import time
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
+import numpy as np
 import pygmo as pg
 
 import mission
 import models
+import search
 
-PARETO_PATH = mission.HERE / "pareto.json"
+
+def nsga2(gen):
+    """Non-dominated sorting genetic algorithm II."""
+    return pg.algorithm(pg.nsga2(gen=gen))
 
 
-def search(n_islands, pop_size, gen, rounds, seed=None, launch_window=None,
-           quiet=False, model='capture', sequence=mission.DEFAULT_SEQUENCE):
-    if pop_size % 4:
-        raise ValueError(f"NSGA-II needs a population size divisible by 4, got {pop_size}")
+def _point(x, f, **tags):
+    """One cloud record from a decision vector and its ``(cost, tof)`` fitness."""
+    record = dict(cost=float(f[0]), tof_days=float(f[1]),   # x[0]: launch epoch (models.py contract)
+                  launch_mjd2000=float(x[0]), arrival_mjd2000=float(x[0] + f[1]),
+                  pareto=False, polished=False, x=list(x))
+    record.update(tags)
+    return record
 
-    udp = models.safe(models.build(model, sequence, launch_window=launch_window,
-                                   multi_objective=True))
-    prob = pg.problem(udp)
-    if models.get(model)['needs_unconstrain']:
-        prob = pg.problem(pg.unconstrain(prob, method='kuri'))
-    algo = pg.algorithm(pg.nsga2(gen=gen))
 
-    kwargs = dict(n=n_islands, algo=algo, prob=prob, pop_size=pop_size, t=pg.ring())
-    if seed is not None:
-        kwargs['seed'] = seed
-    archi = pg.archipelago(**kwargs)
+def flag_front(points):
+    """Set ``pareto`` on the non-dominated points; returns how many there are."""
+    front = set(pg.non_dominated_front_2d([[p['cost'], p['tof_days']] for p in points]))
+    for i, p in enumerate(points):
+        p['pareto'] = i in front
+    return len(front)
 
-    if not quiet:
-        print(f"dimension {prob.get_nx()} | {prob.get_nobj()} objectives | "
-              f"{n_islands} islands x pop {pop_size} | {rounds} rounds x {gen} gen")
 
-    t0 = time.time()
-    archi.evolve(rounds)
-    archi.wait_check()
-    wall = time.time() - t0
-    if not quiet:
-        print(f"archipelago done in {wall:.1f}s")
+def optimise_front(args, launch_window=None, log=print):
+    """NSGA-II archipelago over one launch window; returns the pooled cloud.
 
-    # Pool every individual from every island, not just champions.
-    xs, fs = [], []
-    for isl in archi:
-        pop = isl.get_population()
-        xs.extend([list(v) for v in pop.get_x()])
-        fs.extend([list(v) for v in pop.get_f()])
+    Args:
+        args: Parsed CLI namespace (see ``search.add_search_args``).
+        launch_window: Optional ``[epoch, epoch]`` narrowing (slice sweep).
+        log: Print-like callable for progress lines.
 
-    front_idx = set(pg.non_dominated_front_2d(fs))
-    if not quiet:
-        print(f"pooled {len(fs)} individuals | {len(front_idx)} on the non-dominated front")
+    Returns:
+        ``(points, wall_seconds)`` with every individual from every island.
 
-    points = []
-    for i, (x, f) in enumerate(zip(xs, fs)):
-        dv, tof = f[0], f[1]
-        launch = x[0]
-        points.append({
-            'dv_ms': dv,
-            'tof_days': tof,
-            'launch_mjd2000': launch,
-            'arrival_mjd2000': launch + tof,
-            'pareto': i in front_idx,
-            # Keep EVERY decision vector, not just the front's. Dominance here
-            # is computed on unpolished fitness, and local refinement moves
-            # points by far more than the margins that separate them -- so a
-            # point dominated now may well win after polishing. Discarding its
-            # x makes that impossible to ever test.
-            'x': x,
-        })
-
+    Raises:
+        ValueError: If the population size is not a multiple of four
+            (an NSGA-II requirement).
+    """
+    if args.pop % 4:
+        raise ValueError(f"NSGA-II needs a population size divisible by 4, got {args.pop}")
+    prob = models.problem(args.model, args.sequence, launch_window=launch_window,
+                          multi_objective=True)
+    archi, wall = search.run_archipelago(prob, nsga2(args.gen), args.islands, args.pop,
+                                         args.rounds, args.seed, log)
+    points = [_point(x, f) for island in archi
+              for x, f in zip(island.get_population().get_x(),
+                              island.get_population().get_f())]
+    log(f"pooled {len(points)} individuals")
     return points, wall
 
 
 def sweep(args):
-    """One NSGA-II run per launch slice, pooled into a single point cloud.
+    """One NSGA-II run per launch slice, pooled into a single cloud.
 
     A single search over the whole window concentrates on whichever launch
-    opportunities look cheapest and abandons the rest -- on the previous run,
-    7 of 17 synodic slices were never sampled at all. The porkchop then shows
-    empty bands that read as "no solutions here" when they only mean "never
-    searched". Per-slice runs guarantee every launch opportunity is covered.
+    opportunities look cheapest and abandons the rest; per-slice runs
+    guarantee every opportunity is sampled, so the porkchop never shows an
+    empty band that only means "never searched".
 
-    Dominance is recomputed over the POOLED set at the end, so the flagged
-    front is the true global front, not a union of per-slice fronts.
+    Args:
+        args: Parsed CLI namespace.
+
+    Returns:
+        ``(points, wall_seconds)``: the pooled cloud (each point tagged with
+        its ``slice``) and the total elapsed time.
     """
-    slices = mission.launch_slices(width_days=args.slice_width,
-                                   overlap=args.overlap, sequence=args.sequence)
+    slices = mission.launch_slices(args.sequence, width_days=args.slice_width,
+                                   overlap=args.overlap)
     print(f"sweeping {len(slices)} launch slices "
-          f"({args.islands} islands x pop {args.pop}, "
-          f"{args.rounds} rounds x {args.gen} gen each)")
-    print(f"{'#':>3}  {'from':>10}  {'to':>10}  {'pts':>5}  {'best DV':>10}  {'secs':>6}")
-
+          f"({args.islands} islands x pop {args.pop}, {args.rounds} rounds x {args.gen} gen)")
     pooled, t_all = [], time.time()
     for i, window in enumerate(slices):
-        pts, wall = search(args.islands, args.pop, args.gen, args.rounds,
-                           args.seed, launch_window=window, quiet=True,
-                           model=args.model, sequence=args.sequence)
-        for pt in pts:
-            pt['slice'] = i
-        best = min(p['dv_ms'] for p in pts)
-        print(f"{i:3d}  {window[0].mjd:10.1f}  {window[1].mjd:10.1f}  "
-              f"{len(pts):5d}  {best:10.0f}  {wall:6.1f}")
-        pooled.extend(pts)
+        points, wall = optimise_front(args, window, log=search.silent)
+        for p in points:
+            p['slice'] = i
+        print(f"  slice {i:2d}  {window[0].mjd:9.1f}..{window[1].mjd:9.1f}  "
+              f"{len(points):5d} pts  best {min(p['cost'] for p in points):9.0f}  {wall:5.1f}s")
+        pooled.extend(points)
+    print(f"sweep done in {(time.time() - t_all) / 60:.1f} min | {len(pooled)} points pooled")
+    return pooled, time.time() - t_all
 
-    # Recompute dominance across every slice at once.
-    fs = [[p['dv_ms'], p['tof_days']] for p in pooled]
-    front_idx = set(pg.non_dominated_front_2d(fs))
-    for i, pt in enumerate(pooled):
-        pt['pareto'] = i in front_idx
 
-    total = time.time() - t_all
-    print(f"\nsweep done in {total/60:.1f} min | {len(pooled)} points pooled | "
-          f"{len(front_idx)} on the global front")
-    return pooled, total
+def polish_front(points, args):
+    """MBH-polish a TOF-spanning sub-sample of the front and re-rank the cloud.
+
+    Each chosen point is pinned to a narrow band around its own launch date
+    (``x[0]``, the one gene every model shares) and time of flight (an
+    epsilon-constraint applied through the problem's TOF bounds) and locally
+    minimised. Polished
+    points are appended as new individuals and dominance is recomputed over
+    the union: refinement moves points by more than the margins between them,
+    so the old front cannot be assumed to survive.
+
+    Args:
+        points: The cloud; mutated in place (new points appended, flags reset).
+        args: Parsed CLI namespace with the ``--polish*`` knobs.
+
+    Returns:
+        A summary dict recorded into the result's settings.
+    """
+    front = sorted((i for i, p in enumerate(points) if p['pareto']),
+                   key=lambda i: points[i]['tof_days'])
+    if not front or args.polish <= 0:
+        return {'n_polished': 0}
+    picks = sorted({int(round(k)) for k in np.linspace(0, len(front) - 1,
+                                                       min(args.polish, len(front)))})
+    jobs = []
+    for k in picks:
+        src = points[front[k]]
+        jobs.append(dict(model=args.model, sequence=args.sequence, x=src['x'],
+                         window_mjd2000=[src['x'][0] - args.polish_pad_days,
+                                         src['x'][0] + args.polish_pad_days],
+                         tof_days=[src['tof_days'] * (1 - args.polish_band),
+                                   src['tof_days'] * (1 + args.polish_band)],
+                         maxeval=args.polish_maxeval, stop=args.polish_stop))
+
+    print(f"\npolishing {len(jobs)} of {len(front)} front points in parallel "
+          f"(MBH stop={args.polish_stop}, COBYLA maxeval={args.polish_maxeval})")
+    print(f"{'#':>3}  {'TOF yr':>7}  {'before':>9}  {'after':>9}  {'gain':>6}  {'secs':>6}")
+    t0 = time.time()
+    results = search.parallel_polish(jobs, args.polish_workers)
+    scorer = models.build(args.model, args.sequence, multi_objective=True)
+
+    gains = []
+    for k, r in zip(picks, results):
+        src = points[front[k]]
+        gain = 100 * (r['before'] - r['after']) / r['before'] if r['before'] else 0.0
+        gains.append(gain)
+        print(f"{k:3d}  {src['tof_days'] / 365.25:7.2f}  {r['before']:9.0f}  {r['after']:9.0f}  "
+              f"{gain:5.1f}%  {r['seconds']:6.1f}")
+        points.append(_point(r['x'], scorer.fitness(r['x']), polished=True,
+                             polished_from=front[k], slice=src.get('slice')))
+
+    n_front = flag_front(points)
+    on_front = sum(1 for p in points if p['polished'] and p['pareto'])
+    print(f"polish done in {time.time() - t0:.1f}s | mean gain {np.mean(gains):.1f}% | "
+          f"{on_front}/{len(jobs)} polished points on the recomputed front ({n_front} total)")
+    return dict(n_polished=len(jobs), band=args.polish_band, pad_days=args.polish_pad_days,
+                maxeval=args.polish_maxeval, stop=args.polish_stop,
+                mean_gain_pct=float(np.mean(gains)))
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('--model', default='capture',
-                    choices=sorted(models.MODELS), help='propulsion/objective model')
-    ap.add_argument('--sequence', default=mission.DEFAULT_SEQUENCE,
-                    help='flyby sequence string, e.g. EVEEJN')
-    ap.add_argument('--islands', type=int, default=8)
-    ap.add_argument('--pop', type=int, default=100)
-    ap.add_argument('--gen', type=int, default=200)
-    ap.add_argument('--rounds', type=int, default=10)
-    ap.add_argument('--seed', type=int, default=None)
-    ap.add_argument('--out', type=Path, default=None)
-    ap.add_argument('--sweep', action='store_true',
-                    help='partition the launch window into synodic slices and '
-                         'run NSGA-II on each, so every launch opportunity is '
-                         'covered')
-    ap.add_argument('--slice-width', type=float, default=None, dest='slice_width',
-                    help='slice width in days (default: Earth-Venus synodic, ~583 d)')
-    ap.add_argument('--overlap', type=float, default=0.2,
-                    help='fractional overlap between adjacent slices')
-    args = ap.parse_args()
-    if args.out is None:
-        outdir = mission.RESULTS_DIR / args.model / args.sequence
-        outdir.mkdir(parents=True, exist_ok=True)
-        args.out = outdir / 'pareto.json'
+    """CLI: search (or sweep), flag the front, polish it, write the cloud."""
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    search.add_search_args(parser, islands=8, pop=100, gen=200, rounds=10)
+    parser.add_argument('--polish', type=int, default=16, metavar='N',
+                        help='MBH-polish N TOF-spanning front points (0 disables)')
+    parser.add_argument('--polish-band', type=float, default=0.03, dest='polish_band',
+                        help='fractional TOF band a polished point is pinned to')
+    parser.add_argument('--polish-pad-days', type=float, default=45.0, dest='polish_pad_days',
+                        help='launch-date half-window a polished point is pinned to')
+    args = parser.parse_args()
+    out = search.output_path(args, 'pareto.json')
 
-    if args.sweep:
-        points, wall = sweep(args)
-    else:
-        points, wall = search(args.islands, args.pop, args.gen, args.rounds, args.seed,
-                              model=args.model, sequence=args.sequence)
+    points, wall = sweep(args) if args.sweep else optimise_front(args)
+    print(f"{flag_front(points)} on the non-dominated front")
+    polish_info = polish_front(points, args)
 
     front = [p for p in points if p['pareto']]
-    best_dv = min(front, key=lambda p: p['dv_ms'])
-    fastest = min(front, key=lambda p: p['tof_days'])
-    print(f"  cheapest on front : {best_dv['dv_ms']:8.0f} m/s @ {best_dv['tof_days'] / 365.25:5.2f} yr")
-    print(f"  fastest on front  : {fastest['dv_ms']:8.0f} m/s @ {fastest['tof_days'] / 365.25:5.2f} yr")
+    cheapest, fastest = min(front, key=lambda p: p['cost']), min(front, key=lambda p: p['tof_days'])
+    print(f"  cheapest on front : {cheapest['cost']:8.0f} @ {cheapest['tof_days'] / 365.25:5.2f} yr")
+    print(f"  fastest on front  : {fastest['cost']:8.0f} @ {fastest['tof_days'] / 365.25:5.2f} yr")
 
-    args.out.write_text(json.dumps({
-        'sequence': mission.LABELS,
-        'tof_bounds_days': mission.MISSION_TOF_DAYS,
-        'settings': {'islands': args.islands, 'pop': args.pop, 'gen': args.gen,
-                     'rounds': args.rounds, 'seed': args.seed, 'topology': 'ring',
-                     'wall_seconds': round(wall, 1),
-                     'swept': args.sweep,
-                     'slice_width_days': args.slice_width if args.sweep else None,
-                     'overlap': args.overlap if args.sweep else None,
-                     'model': args.model, 'sequence': args.sequence,
-                     **mission.objective_config()},
-        'points': points,
-    }, indent=2))
-    print(f"wrote {args.out}  ({len(points)} points)")
+    out.write_text(json.dumps({**search.result_header(args),
+                               'settings': search.run_settings(args, wall, polish=polish_info),
+                               'points': points}, indent=2))
+    print(f"wrote {out}  ({len(points)} points)")
 
 
 if __name__ == '__main__':

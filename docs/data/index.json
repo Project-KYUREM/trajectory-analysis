@@ -1,58 +1,20 @@
 [
   {
-    "model": "capture",
-    "sequence": "EVEEJN",
-    "labels": [
-      "Earth",
-      "Venus",
-      "Earth",
-      "Earth",
-      "Jupiter",
-      "Neptune"
-    ],
-    "cost_label": "Delta-V \u2014 deep-space maneuvers + Neptune capture",
-    "cost_units": "m/s",
-    "n_points": 720,
-    "n_front": 66,
-    "n_detail": 92,
-    "best_cost": 18280.58308439763,
-    "best_tof_years": 27.075048050273335,
-    "path": "data/capture/EVEEJN/cloud.json"
-  },
-  {
-    "model": "capture",
-    "sequence": "EVJN",
-    "labels": [
-      "Earth",
-      "Venus",
-      "Jupiter",
-      "Neptune"
-    ],
-    "cost_label": "Delta-V \u2014 deep-space maneuvers + Neptune capture",
-    "cost_units": "m/s",
-    "n_points": 720,
-    "n_front": 90,
-    "n_detail": 118,
-    "best_cost": 9751.958848275513,
-    "best_tof_years": 28.655912858273666,
-    "path": "data/capture/EVJN/cloud.json"
-  },
-  {
-    "model": "capture",
+    "model": "ballistic",
     "sequence": "EJN",
     "labels": [
       "Earth",
       "Jupiter",
       "Neptune"
     ],
-    "cost_label": "Delta-V \u2014 deep-space maneuvers + Neptune capture",
+    "cost_label": "Departure Delta-V (launch energy)",
     "cost_units": "m/s",
-    "n_points": 720,
-    "n_front": 139,
-    "n_detail": 167,
-    "best_cost": 5760.388339165759,
-    "best_tof_years": 16.8191884858089,
-    "path": "data/capture/EJN/cloud.json"
+    "n_points": 728,
+    "n_front": 250,
+    "n_detail": 278,
+    "best_cost": 6812.04094080742,
+    "best_tof_years": 33.237339764001504,
+    "path": "data/ballistic/EJN/cloud.json"
   },
   {
     "model": "ballistic",
@@ -67,11 +29,11 @@
     ],
     "cost_label": "Departure Delta-V (launch energy)",
     "cost_units": "m/s",
-    "n_points": 720,
-    "n_front": 90,
-    "n_detail": 118,
-    "best_cost": 17005.42511375103,
-    "best_tof_years": 13.92025694523358,
+    "n_points": 728,
+    "n_front": 151,
+    "n_detail": 180,
+    "best_cost": 18618.07769342527,
+    "best_tof_years": 16.755671588768184,
     "path": "data/ballistic/EVEEJN/cloud.json"
   },
   {
@@ -85,28 +47,66 @@
     ],
     "cost_label": "Departure Delta-V (launch energy)",
     "cost_units": "m/s",
-    "n_points": 720,
-    "n_front": 152,
-    "n_detail": 180,
-    "best_cost": 9835.881661670863,
-    "best_tof_years": 23.375629544660885,
+    "n_points": 728,
+    "n_front": 123,
+    "n_detail": 150,
+    "best_cost": 8489.345570894606,
+    "best_tof_years": 31.1031673605353,
     "path": "data/ballistic/EVJN/cloud.json"
   },
   {
-    "model": "ballistic",
+    "model": "capture",
     "sequence": "EJN",
     "labels": [
       "Earth",
       "Jupiter",
       "Neptune"
     ],
-    "cost_label": "Departure Delta-V (launch energy)",
+    "cost_label": "Delta-V \u2014 deep-space maneuvers + capture",
     "cost_units": "m/s",
-    "n_points": 720,
-    "n_front": 212,
-    "n_detail": 240,
-    "best_cost": 6873.773936297575,
-    "best_tof_years": 32.76262112593242,
-    "path": "data/ballistic/EJN/cloud.json"
+    "n_points": 728,
+    "n_front": 106,
+    "n_detail": 133,
+    "best_cost": 4720.2363390027085,
+    "best_tof_years": 29.50728050101597,
+    "path": "data/capture/EJN/cloud.json"
+  },
+  {
+    "model": "capture",
+    "sequence": "EVEEJN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Earth",
+      "Earth",
+      "Jupiter",
+      "Neptune"
+    ],
+    "cost_label": "Delta-V \u2014 deep-space maneuvers + capture",
+    "cost_units": "m/s",
+    "n_points": 728,
+    "n_front": 50,
+    "n_detail": 75,
+    "best_cost": 12960.23157766472,
+    "best_tof_years": 15.390589367584578,
+    "path": "data/capture/EVEEJN/cloud.json"
+  },
+  {
+    "model": "capture",
+    "sequence": "EVJN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Jupiter",
+      "Neptune"
+    ],
+    "cost_label": "Delta-V \u2014 deep-space maneuvers + capture",
+    "cost_units": "m/s",
+    "n_points": 728,
+    "n_front": 22,
+    "n_detail": 50,
+    "best_cost": 8798.06354993552,
+    "best_tof_years": 18.88890305168505,
+    "path": "data/capture/EVJN/cloud.json"
   }
 ]

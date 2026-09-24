@@ -1,19 +1,17 @@
-"""Shared mission setup: SPICE kernels, gravitational parameters, bodies, UDP.
+"""Shared mission physics: SPICE kernels, the body registry, sequences, bounds.
 
-Imported by the notebook, the optimisers, the batch runner, and the publish
-step. Kernel loading happens at import time on purpose: pygmo's mp_island
-ships the pickled problem to a child process, and a pickled pykep.planet.spice
-is only ~250 bytes -- it carries the target/observer strings and the mus,
-nothing else, and resolves positions against whatever kernel pool the child
-happens to have. So every process that touches a problem has to furnsh the
-kernels itself, which importing this module guarantees.
+Kernel loading happens at import time on purpose. pygmo's mp_island ships a
+pickled problem to spawned worker processes, and a pickled ``pykep.planet.spice``
+is only ~250 bytes: target/observer strings plus the GMs. It resolves positions
+against whatever kernel pool the *child* has, so every process that touches a
+problem must furnsh the kernels itself. Importing this module guarantees that.
 
-Sequences are strings over the letters below, always starting at Earth and
-ending at Neptune: "EVEEJN", "EJN", "EVMJN", ...
+A sequence is a string over the letters in ``BODIES``, starting at Earth and
+ending at a body that defines capture parameters: ``"EVEEJN"``, ``"EJN"``, ...
 """
 import datetime as _dt
 import math as _math
-from pathlib import Path
+from dataclasses import dataclass
 
 # spiceypy must be imported before pykep: whichever is imported first owns the
 # CSPICE handle, and if pykep wins, spiceypy gets a *separate* kernel pool that
@@ -23,11 +21,7 @@ import spiceypy as spice
 
 import pykep as pk
 
-# ---------------------------------------------------------------- kernels ---
-HERE = Path(__file__).resolve().parent
-DATA_DIR = (HERE / ".." / "data").resolve()
-RESULTS_DIR = (HERE / ".." / "results").resolve()
-CHAMPION_PATH = HERE / "champion.json"
+import paths
 
 # de440.bsp carries only barycenters 1-10 plus 199, 299, 301, 399 -- no
 # Neptune centre (899) and no Triton (801). nep097.bsp supplies both.
@@ -35,8 +29,9 @@ KERNELS = ("de440.bsp", "naif0012.tls", "pck00011.tpc", "gm_de440.tpc", "nep097.
 
 
 def _load_kernels():
+    """Furnsh every kernel into both pykep's and spiceypy's pool."""
     for kernel in KERNELS:
-        path = DATA_DIR / kernel
+        path = paths.DATA_DIR / kernel
         if not path.is_file():
             raise FileNotFoundError(
                 f"SPICE kernel missing: {path}\n"
@@ -49,8 +44,8 @@ def _load_kernels():
 _load_kernels()
 
 
-def gm(body: str) -> float:
-    """GM from the kernel pool, km^3/s^2 -> m^3/s^2."""
+def gm(body):
+    """Gravitational parameter of a SPICE body, in m^3/s^2 (kernel gives km^3/s^2)."""
     _, values = spice.bodvcd(spice.bodn2c(body), "GM", 1)
     return values[0] * 1e9
 
@@ -65,6 +60,10 @@ def gm(body: str) -> float:
 #   pykep's own convention (radiation-belt standoff). Saturn is deliberately
 #   NOT pykep's 1.1 -- that would fly through the B ring; 2.4 clears the F
 #   ring (~2.32 R_S).
+# capture / entry_altitude_m: present only on bodies that can end a sequence.
+#   capture = the loose insertion ellipse the `capture` model prices;
+#   entry_altitude_m = height of the atmospheric entry interface above the
+#   1-bar radius, used for the reported entry speed.
 BODIES = {
     'V': dict(label='Venus', ephem='VENUS', gm_of='VENUS',
               radius=6051800.0, safe_ratio=1.1),
@@ -77,114 +76,127 @@ BODIES = {
     'S': dict(label='Saturn', ephem='SATURN BARYCENTER', gm_of='SATURN',
               radius=60268000.0, safe_ratio=2.4),
     'N': dict(label='Neptune', ephem='NEPTUNE', gm_of='NEPTUNE',
-              radius=24622000.0, safe_ratio=1.1),
+              radius=24622000.0, safe_ratio=1.1,
+              # loose first-capture ellipse (cheap to enter, walked down later);
+              # 1000 km is the usual giant-planet entry-interface altitude
+              capture=dict(rp_ratio=1.1, e=0.99), entry_altitude_m=1000e3),
 }
 
 _planet_cache = {}
 
 
-def make_planet(letter: str):
-    """Heliocentric pykep planet for one sequence letter (cached)."""
+def make_planet(letter):
+    """Heliocentric pykep planet for one registry letter (cached per process)."""
     if letter not in _planet_cache:
-        b = BODIES[letter]
-        mu = pk.MU_EARTH if letter == 'E' else gm(b['gm_of'])
+        body = BODIES[letter]
+        mu = pk.MU_EARTH if letter == 'E' else gm(body['gm_of'])
         _planet_cache[letter] = pk.planet.spice(
-            b['ephem'], 'SUN', 'ECLIPJ2000', 'NONE', pk.MU_SUN, mu,
-            b['radius'], b['radius'] * b['safe_ratio'])
+            body['ephem'], 'SUN', 'ECLIPJ2000', 'NONE', pk.MU_SUN, mu,
+            body['radius'], body['radius'] * body['safe_ratio'])
     return _planet_cache[letter]
 
 
-def make_sequence(sequence: str):
-    """(planets, labels) for a sequence string like 'EVEEJN'."""
+def make_sequence(sequence):
+    """Validate a sequence string and resolve it to planets and labels.
+
+    Args:
+        sequence: Letters from ``BODIES``, e.g. ``"EVEEJN"``. Case-insensitive.
+
+    Returns:
+        ``(planets, labels)``: the pykep planets in order and their names.
+
+    Raises:
+        ValueError: If a letter is unknown, the sequence does not start at
+            Earth, or the final body has no capture parameters (cannot be a
+            destination).
+    """
     sequence = sequence.upper().strip()
-    if not sequence.startswith('E') or not sequence.endswith('N'):
-        raise ValueError(f"sequence must start at Earth and end at Neptune: {sequence!r}")
     unknown = set(sequence) - set(BODIES)
     if unknown:
         raise ValueError(f"unknown bodies {sorted(unknown)} in {sequence!r}")
-    return ([make_planet(c) for c in sequence],
-            [BODIES[c]['label'] for c in sequence])
+    if not sequence.startswith('E'):
+        raise ValueError(f"sequence must start at Earth: {sequence!r}")
+    if 'capture' not in BODIES[sequence[-1]]:
+        destinations = [k for k, b in BODIES.items() if 'capture' in b]
+        raise ValueError(f"sequence must end at a destination {destinations}: {sequence!r}")
+    return [make_planet(c) for c in sequence], [BODIES[c]['label'] for c in sequence]
 
 
-DEFAULT_SEQUENCE = 'EVEEJN'
-
-# Backward-compatible module-level default (the notebook uses these).
-seq, LABELS = make_sequence(DEFAULT_SEQUENCE)
-earth, venus = make_planet('E'), make_planet('V')
-jupiter, neptune = make_planet('J'), make_planet('N')
-
-MU_NEPTUNE = gm('NEPTUNE')
-MU_TRITON = gm('TRITON')
-MU_VENUS = gm('VENUS')
-MU_JUPITER = gm('JUPITER')
-
-R_EARTH = BODIES['E']['radius']
-R_VENUS = BODIES['V']['radius']
-R_JUPITER = BODIES['J']['radius']
-R_NEPTUNE = BODIES['N']['radius']
-R_TRITON = 1353400.0
-
-# Neptune-centred body for stage two / notebook.
-triton = pk.planet.spice('TRITON', 'NEPTUNE', 'ECLIPJ2000', 'NONE',
-                         MU_NEPTUNE, MU_TRITON, R_TRITON, R_TRITON * 1.1)
-
-# ------------------------------------------------------------- the problem --
-# One bound on the whole cruise; tof_encoding='alpha' takes [min, max] days
-# and lets the optimiser split the budget across legs itself.
+# ------------------------------------------------------------------ bounds --
+# One bound on the whole cruise (8.2 .. 32.9 years); tof_encoding='alpha' takes
+# [min, max] days and lets the optimiser split the budget across legs itself.
+# Trident-class flyby profiles sit near 12 yr; capture-heavy ones run to ~30.
 MISSION_TOF_DAYS = [3000.0, 12000.0]
 
-# vinf is in km/s -- get_bounds() does vinf[i] * 1000 internally.
+# Launch hyperbolic excess speed, km/s (pykep multiplies by 1000 internally).
+# 5 km/s is C3 = 25 km^2/s^2, roughly what a heavy-lift launcher gives a
+# few-tonne probe; the optimiser may use less.
 LAUNCH_VINF_KMS = [0.0, 5.0]
 
+# Two time scales are in play. NAIF/JPL tables and this window are quoted in
+# MJD; pykep works and every stored value (x[0], launch_mjd2000, ...) is in
+# MJD2000 = MJD - 51544.5. This window is Jan 2045 .. Jan 2071.
 LAUNCH_WINDOW = [pk.epoch(68000, 'mjd'), pk.epoch(77500, 'mjd')]
 
-# ---------------------------------------------------- Neptune capture -------
-# Arrival vinf is the speed relative to Neptune while still far away; it is
-# NOT the cost of arriving. orbit_insertion=True makes pykep price the real
-# periapsis burn into a loose capture ellipse instead of the raw vinf, which
-# would overprice arrival ~10x and bias the search towards slow trajectories.
-NEPTUNE_CAPTURE_RP = 1.1 * R_NEPTUNE   # periapsis of the capture orbit, m
-NEPTUNE_CAPTURE_E = 0.99               # eccentricity of the capture orbit
 
+@dataclass(frozen=True)
+class Setup:
+    """Everything a model builder needs to construct a problem.
 
-def build_udp(multi_objective=False, orbit_insertion=True, launch_window=None,
-              sequence=None):
-    """The heliocentric MGA-1DSM problem for one sequence string.
-
-    multi_objective=True -> fitness is (total DV, total TOF) for Pareto runs.
-    orbit_insertion=True (default) -> the final DV term is the Neptune capture
-      burn rather than raw arrival vinf. The two objectives are NOT comparable,
-      but the decision vector is unaffected (get_bounds is objective-blind), so
-      an x from either scores under both.
-    launch_window -> [epoch, epoch] override, used by the slice sweep.
+    Attributes:
+        sequence: Upper-case sequence string.
+        planets: pykep planets in visiting order.
+        labels: Body names in visiting order.
+        destination: The ``BODIES`` entry of the final body (capture parameters,
+            entry altitude).
+        window: ``[pk.epoch, pk.epoch]`` launch window.
+        tof_days: ``[min, max]`` total time of flight in days.
     """
-    planets, _ = make_sequence(sequence or DEFAULT_SEQUENCE)
-    window = launch_window if launch_window is not None else LAUNCH_WINDOW
+    sequence: str
+    planets: list
+    labels: list
+    destination: dict
+    window: list
+    tof_days: list
 
-    extra = {}
-    if orbit_insertion:
-        # pykep raises if add_vinf_arr is False while orbit_insertion is on.
-        extra = dict(orbit_insertion=True,
-                     rp_target=NEPTUNE_CAPTURE_RP,
-                     e_target=NEPTUNE_CAPTURE_E)
 
-    return pk.trajopt.mga_1dsm(
-        seq=planets,
-        t0=list(window),
-        tof=MISSION_TOF_DAYS,
-        tof_encoding='alpha',
-        vinf=LAUNCH_VINF_KMS,
-        add_vinf_dep=False,   # launcher supplies the departure vinf
-        add_vinf_arr=True,    # required by orbit_insertion; see above
-        multi_objective=multi_objective,
-        **extra,
+def resolve_bounds(sequence, launch_window=None, tof_days=None):
+    """Resolve a sequence plus optional overrides into a ``Setup``.
+
+    Args:
+        sequence: Sequence string, see ``make_sequence``.
+        launch_window: ``[epoch, epoch]`` override; the slice sweep narrows it.
+        tof_days: ``[min, max]`` override; the front polish pins a point to
+            its own time of flight with it.
+
+    Returns:
+        A ``Setup`` with defaults filled from the module constants.
+    """
+    planets, labels = make_sequence(sequence)
+    return Setup(
+        sequence=sequence.upper().strip(),
+        planets=planets,
+        labels=labels,
+        destination=BODIES[sequence.upper().strip()[-1]],
+        window=list(launch_window) if launch_window is not None else LAUNCH_WINDOW,
+        tof_days=list(tof_days) if tof_days is not None else MISSION_TOF_DAYS,
     )
 
 
 # ------------------------------------------------- launch-window slicing ----
 def orbital_period(planet, epoch=None):
-    """Osculating period about the central body, seconds (planet.spice has no
-    period(): derive a from the state, then T = 2*pi*sqrt(a^3/mu))."""
+    """Osculating period about the central body.
+
+    ``planet.spice`` exposes no ``period()``, so derive the semi-major axis from
+    the state vector and apply Kepler's third law.
+
+    Args:
+        planet: A pykep planet.
+        epoch: When to evaluate the state; defaults to the window start.
+
+    Returns:
+        The period in seconds.
+    """
     epoch = epoch if epoch is not None else LAUNCH_WINDOW[0]
     r, v = planet.eph(epoch)
     r_mag = _math.sqrt(sum(c * c for c in r))
@@ -195,56 +207,63 @@ def orbital_period(planet, epoch=None):
 
 
 def synodic_period(p1, p2, epoch=None):
-    """Days between successive p1 -> p2 launch opportunities. For a resonant
-    first leg (same body twice, e.g. 'EE...') the synodic period diverges --
-    any date works equally -- so fall back to two years per slice."""
+    """Days between successive p1 -> p2 launch opportunities.
+
+    Args:
+        p1: Departure pykep planet.
+        p2: Arrival pykep planet.
+        epoch: When to evaluate the orbits; defaults to the window start.
+
+    Returns:
+        The synodic period in days. For a resonant first leg (same body twice,
+        e.g. ``"EE..."``) it diverges -- any date works equally -- so anything
+        beyond ~8 years falls back to two years per slice.
+    """
     t1 = orbital_period(p1, epoch) / 86400.0
     t2 = orbital_period(p2, epoch) / 86400.0
     diff = abs(1.0 / t1 - 1.0 / t2)
-    if diff < 1e-6 or 1.0 / diff > 3000.0:
-        return 730.5
-    return 1.0 / diff
+    return 730.5 if diff < 1e-6 or 1.0 / diff > 3000.0 else 1.0 / diff
 
 
-def launch_slices(window=None, width_days=None, overlap=0.2, sequence=None):
+def launch_slices(sequence, window=None, width_days=None, overlap=0.2):
     """Chop the launch window into overlapping slices, one per opportunity.
 
     First-leg launch opportunities recur at the synodic period of the first
-    two bodies, separated by stretches of very poor DV. Handing an optimiser
-    a multi-decade window makes it search across many nearly disconnected
-    basins at once; one search per slice turns that into many easy problems.
-    Slices overlap so a boundary optimum is not split and missed by both.
+    two bodies, separated by stretches of very poor delta-v. Handing an
+    optimiser a multi-decade window makes it search across many nearly
+    disconnected basins at once; one search per slice turns that into many
+    easy problems. Slices overlap so a boundary optimum is not split and
+    missed by both neighbours.
+
+    Args:
+        sequence: Sequence string; its first two bodies set the slice width.
+        window: ``[epoch, epoch]`` to slice; defaults to ``LAUNCH_WINDOW``.
+        width_days: Explicit slice width; defaults to the synodic period.
+        overlap: Fractional overlap between adjacent slices.
+
+    Returns:
+        A list of ``[epoch, epoch]`` slices covering the window.
     """
-    planets, _ = make_sequence(sequence or DEFAULT_SEQUENCE)
+    planets, _ = make_sequence(sequence)
     window = window if window is not None else LAUNCH_WINDOW
     start_mjd, end_mjd = window[0].mjd, window[1].mjd
     width = width_days if width_days else synodic_period(planets[0], planets[1])
     step = width * (1.0 - overlap)
 
-    out, t = [], start_mjd
+    slices, t = [], start_mjd
     while t < end_mjd:
         hi = min(t + width, end_mjd)
-        out.append([pk.epoch(t, 'mjd'), pk.epoch(hi, 'mjd')])
+        slices.append([pk.epoch(t, 'mjd'), pk.epoch(hi, 'mjd')])
         if hi >= end_mjd:
             break
         t += step
-    return out
+    return slices
 
 
-def objective_config(udp=None):
-    """How the final DV term is priced -- recorded into every saved result so a
-    champion can never be silently compared against a differently-scored run."""
-    udp = udp if udp is not None else build_udp()
-    if getattr(udp, '_orbit_insertion', False):
-        return {'objective': 'orbit_insertion',
-                'capture_rp_m': NEPTUNE_CAPTURE_RP,
-                'capture_e': NEPTUNE_CAPTURE_E}
-    return {'objective': 'vinf_arr'}
-
-
-# MJD2000 epoch, for turning decision-vector dates into calendar dates.
+# ------------------------------------------------------------------- dates --
 MJD2000_EPOCH = _dt.datetime(2000, 1, 1)
 
 
 def mjd2000_to_datetime(mjd2000):
+    """Calendar datetime for a pykep MJD2000 value."""
     return MJD2000_EPOCH + _dt.timedelta(days=float(mjd2000))

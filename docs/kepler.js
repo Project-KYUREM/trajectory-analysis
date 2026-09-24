@@ -19,6 +19,7 @@ const nrm = (a) => Math.sqrt(dot(a, a));
 
 // Propagate (r0, v0) forward by dt seconds under point mass mu. Returns [r, v].
 function propagate(r0, v0, dt, mu) {
+  if (dt === 0) return [r0.slice(), v0.slice()];   // hyperbolic guess below would log(0)
   const r0m = nrm(r0), v0m = nrm(v0);
   const sqmu = Math.sqrt(mu);
   const alpha = 2 / r0m - v0m * v0m / mu;   // 1/a
