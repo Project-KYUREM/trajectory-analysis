@@ -28,6 +28,17 @@ import models
 _R_ECLIP_TO_EME = np.array(spice.pxform('ECLIPJ2000', 'J2000', 0.0))
 
 
+# Neptune atmospheric entry: gravity accelerates an arriving spacecraft far
+# past its v_inf. Entry speed = sqrt(v_inf^2 + 2*mu/r) at the entry interface,
+# taken ~1000 km above the 1-bar radius. Even v_inf=0 gives the escape-speed
+# floor (~23 km/s) -- you cannot arrive slowly at a giant planet.
+NEPTUNE_ENTRY_INTERFACE_M = mission.R_NEPTUNE + 1000e3
+
+
+def neptune_entry_speed(vinf_ms):
+    return math.sqrt(vinf_ms ** 2 + 2 * mission.MU_NEPTUNE / NEPTUNE_ENTRY_INTERFACE_M)
+
+
 def _to_eme(vec):
     return list(_R_ECLIP_TO_EME @ np.asarray(vec, dtype=float))
 
@@ -158,6 +169,8 @@ def describe(model, sequence, x):
             'vinf_vec_eclip_ms': [float(c) for c in vinf_arr],
             'vinf_vec_eme_ms': _to_eme(vinf_arr),
             'capture_dv_ms': capture_dv,
+            'entry_speed_ms': neptune_entry_speed(vinf_arr_mag),
+            'entry_interface_km': NEPTUNE_ENTRY_INTERFACE_M / 1e3,
         },
         'totals': {
             'cost': cost, 'cost_units': spec['units'],

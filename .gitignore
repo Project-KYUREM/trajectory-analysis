@@ -217,19 +217,18 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-data/
+/data/
 *.json
 *.png
 
 # --- kyurem project ---
-# SPICE kernels: large binaries, fetched not committed (see scripts/fetch_kernels.sh)
-data/
-# Raw optimisation output: big (tens of MB/run) and regenerable. The compacted
-# site payload under docs/data/ IS committed; the raw clouds are not.
+# The repo already ignores *.json and *.png globally (above). The compacted
+# site payload lives in docs/data/ and MUST be committed for GitHub Pages, so
+# re-include it explicitly:
+!docs/data/
+!docs/data/**
+# Raw optimisation output: big (tens of MB/run) and regenerable, NOT committed.
 results/
-orbit_planning/champion.json
-orbit_planning/pareto.json
-orbit_planning/slices.json
 # editor / build junk seen in this repo
 .vscode/
 PC_Linux_GCC_64bit/

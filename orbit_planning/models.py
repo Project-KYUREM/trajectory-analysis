@@ -129,20 +129,20 @@ def _build_nep(sequence, launch_window=None, multi_objective=False):
 MODELS = {
     'capture': dict(
         build=_build_capture, impulsive=True, needs_unconstrain=False,
-        label='DV (DSM + Neptune capture)', units='m/s',
+        label='Delta-V — deep-space maneuvers + Neptune capture', units='m/s',
         cost_of=lambda f: float(f[0]),
-        blurb='mga_1dsm, orbit insertion into an e=0.99 capture ellipse'),
+        blurb='Chemical: deep-space maneuvers plus a capture burn into an e=0.99 ellipse'),
     'ballistic': dict(
         build=_build_ballistic, impulsive=True, needs_unconstrain=False,
-        label='Departure C3 delta-v', units='m/s',
+        label='Departure Delta-V (launch energy)', units='m/s',
         cost_of=lambda f: float(f[0]),
-        blurb='Trident-style: gravity assists only, flyby arrival'),
+        blurb='Trident-style: gravity assists only, no deep-space maneuvers, flyby arrival'),
     'nep': dict(
         build=_build_nep, impulsive=False, needs_unconstrain=True,
         label='Propellant mass', units='kg',
         # objective is -final_mass; propellant = wet - delivered
         cost_of=lambda f: float(NEP_PARAMS['wet_mass'] + f[0]),
-        blurb='40 kWe nuclear-electric low thrust (Sims-Flanagan)'),
+        blurb='40 kWe nuclear-electric propulsion (low thrust)'),
 }
 
 

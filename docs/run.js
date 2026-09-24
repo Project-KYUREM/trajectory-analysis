@@ -26,11 +26,14 @@ fetch('data/index.json').then(r => r.json()).then(idx => {
 });
 
 function load() {
-  fetch(`data/${MODEL}/${SEQ}/cloud.json`).then(r => r.json()).then(c => {
+  fetch(`data/${MODEL}/${SEQ}/cloud.json`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(c => {
     CLOUD = c;
     document.getElementById('crumb').textContent =
       `${SEQ} · ${c.labels.join(' → ')} · ${c.blurb}`;
     drawScatter();
+  }).catch(e => {
+    document.querySelector('.run-wrap').innerHTML =
+      '<p class="placeholder">Could not load this run (' + e.message + ').</p>';
   });
 }
 
@@ -107,7 +110,7 @@ function showDetail(id) {
     ? `<tr><th>Neptune capture burn</th><td class="num">${arr.capture_dv_ms.toFixed(0)} m/s</td></tr>` : '';
   let legRows = d.legs.map((lg, i) => `<tr><td>${lg.from} → ${lg.to}</td>
       <td class="num">${lg.tof_days.toFixed(0)} d</td>
-      <td class="num">${lg.dsm_ms != null ? lg.dsm_ms.toFixed(0) : '—'}</td>
+      <td class="num">${lg.dsm_ms != null ? lg.dsm_ms.toFixed(0) + ' m/s' : '—'}</td>
       <td>${fmtDate(lg.arr_date)}</td></tr>`).join('');
   document.getElementById('detail').innerHTML = `
     <h2>${d.sequence} <span class="muted">· ${d.model}</span></h2>
@@ -115,22 +118,23 @@ function showDetail(id) {
     <div class="kpis">
       <div class="kpi"><div class="v">${fmtCost(d.cost, d.cost_units)}</div><div class="l">${d.cost_label}</div></div>
       <div class="kpi"><div class="v">${d.totals.tof_years.toFixed(1)} yr</div><div class="l">time of flight</div></div>
-      <div class="kpi"><div class="v">${(arr.vinf_ms/1000).toFixed(2)} km/s</div><div class="l">v∞ at Neptune</div></div>
-      <div class="kpi"><div class="v">${L.c3_km2s2.toFixed(1)}</div><div class="l">launch C3 km²/s²</div></div>
+      <div class="kpi"><div class="v">${(arr.vinf_ms/1000).toFixed(2)} km/s</div><div class="l">arrival speed at Neptune (v∞)</div></div>
+      <div class="kpi"><div class="v">${(arr.entry_speed_ms/1000).toFixed(1)} km/s</div><div class="l">atmospheric entry speed</div></div>
+      <div class="kpi"><div class="v">${L.c3_km2s2.toFixed(1)}</div><div class="l">launch energy C3 (km²/s²)</div></div>
     </div>
     <div id="view3d"></div>
     <table class="mission">
-      <tr><th>leg</th><th>TOF</th><th>DSM m/s</th><th>arrive</th></tr>
+      <tr><th>leg</th><th>time of flight</th><th>deep-space maneuver</th><th>arrival date</th></tr>
       ${legRows}
-      <tr><th>Launch RLA / DLA</th><td class="num" colspan="3">${L.rla_deg.toFixed(1)}° / ${L.dla_deg.toFixed(1)}°</td></tr>
+      <tr><th>launch asymptote (right ascension / declination)</th><td class="num" colspan="3">${L.rla_deg.toFixed(1)}° / ${L.dla_deg.toFixed(1)}°</td></tr>
       ${capRow}
     </table>
     <div class="exports">
-      <button id="expCsv">states CSV</button>
+      <button id="expCsv">state vectors (CSV)</button>
       <button id="expGmat">GMAT seed</button>
-      <button id="expJson">full JSON</button>
+      <button id="expJson">full data (JSON)</button>
     </div>
-    <p class="muted">CSV/GMAT give heliocentric arc states in ECLIPJ2000 <em>and</em> J2000 (EME2000) — paste into GMAT/STK and re-propagate.</p>`;
+    <p class="muted">The CSV and GMAT seed give heliocentric arc state vectors in two reference frames — ecliptic J2000 and Earth-equatorial J2000 (EME2000) — to paste into GMAT or STK and re-propagate.</p>`;
   draw3d(d);
   document.getElementById('expCsv').onclick = () => dl(`${d.model}_${d.sequence}_${id}_states.csv`, statesCsv(d));
   document.getElementById('expGmat').onclick = () => dl(`${d.model}_${d.sequence}_${id}_gmat_seed.txt`, gmatSeed(d));

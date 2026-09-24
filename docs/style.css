@@ -23,7 +23,7 @@ header.top {
 }
 header.top h1 { font-size: 19px; margin: 0; font-weight: 650; }
 header.top .sub { color: var(--ink-2); font-size: 13px; }
-main { padding: 22px 26px; max-width: 1500px; margin: 0 auto; }
+main { padding: 20px 30px; max-width: 2100px; margin: 0 auto; }
 
 /* gallery */
 .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); }
@@ -40,7 +40,7 @@ main { padding: 22px 26px; max-width: 1500px; margin: 0 auto; }
   color: var(--ink-2); margin: 24px 0 10px; }
 
 /* run page */
-.run-wrap { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 18px; }
+.run-wrap { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; }
 @media (max-width: 1000px) { .run-wrap { grid-template-columns: 1fr; } }
 .panel { border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2);
   padding: 14px 16px; min-width: 0; }
@@ -52,8 +52,8 @@ button, select {
 }
 button.on { background: var(--accent-2); color: #fff; border-color: var(--accent-2); }
 button:hover, select:hover { border-color: var(--accent-2); }
-#scatter { width: 100%; height: 460px; }
-#view3d { width: 100%; height: 380px; }
+#scatter { width: 100%; height: 620px; }
+#view3d { width: 100%; height: 520px; }
 .detail h2 { font-size: 16px; margin: 4px 0 2px; }
 .detail .muted { color: var(--ink-2); font-size: 13px; }
 table.mission { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }

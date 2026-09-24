@@ -1,7 +1,7 @@
 const AU = 1.495978707e11;
 const fmtCost = (v, u) => u === 'm/s' ? `${(v/1000).toFixed(2)} km/s` : `${v.toFixed(0)} ${u}`;
 
-fetch('data/index.json').then(r => r.json()).then(runs => {
+fetch('data/index.json').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(runs => {
   const g = document.getElementById('gallery');
   if (!runs.length) { g.innerHTML = '<p class="placeholder">No runs published yet. Run batch.py then publish.py.</p>'; return; }
 
@@ -31,4 +31,8 @@ fetch('data/index.json').then(r => r.json()).then(runs => {
     });
     g.appendChild(grid);
   });
+}).catch(e => {
+  document.getElementById('gallery').innerHTML =
+    '<p class="placeholder">Could not load <code>data/index.json</code> (' + e.message +
+    ').<br>On GitHub Pages this usually means <code>docs/data/</code> was not committed.</p>';
 });
