@@ -10,6 +10,7 @@ Resumable: a pair whose ``pareto.json`` already exists is skipped unless
 in ``pareto.py``). This module stays kernel-free on purpose.
 """
 import argparse
+import json
 import subprocess
 import sys
 import time
@@ -18,6 +19,30 @@ from pathlib import Path
 import paths
 
 PARETO = Path(__file__).resolve().with_name('pareto.py')
+
+
+def _existing_run(path):
+    """Describe a previous result so a skip is never opaque.
+
+    Args:
+        path: The pair's ``pareto.json``.
+
+    Returns:
+        ``None`` if absent, else ``{'swept': bool, 'summary': str}`` read from
+        the file's ``settings`` (islands, generations, slices, polish, wall).
+    """
+    if not path.is_file():
+        return None
+    try:
+        settings = json.loads(path.read_text()).get('settings', {})
+    except (OSError, ValueError):
+        return {'swept': False, 'summary': 'unreadable result'}
+    polish = settings.get('polish', {}).get('n_polished', 0)
+    kind = 'swept' if settings.get('swept') else 'single window'
+    return {'swept': bool(settings.get('swept')),
+            'summary': f"{kind}, {settings.get('islands')} islands x pop {settings.get('pop')} x "
+                       f"{settings.get('rounds')}x{settings.get('gen')} gen, {polish} polished, "
+                       f"{(settings.get('wall_seconds') or 0) / 60:.0f} min"}
 
 
 def main():
@@ -34,11 +59,18 @@ def main():
              for s in paths.csv_list(args.sequences, upper=True)]
     print(f"batch: {len(pairs)} (model, sequence) pairs; forwarding {forwarded or 'nothing'}\n")
 
+    want_sweep = '--sweep' in forwarded
     t_all, done = time.time(), 0
     for model, sequence in pairs:
-        if paths.results_path(model, sequence, 'pareto.json').is_file() and not args.force:
-            print(f"  skip {model}/{sequence} (exists)")
-            continue
+        existing = _existing_run(paths.results_path(model, sequence, 'pareto.json'))
+        if existing and not args.force:
+            # A quick unswept result must not satisfy a request for a sweep:
+            # "exists" is only a reason to skip when it is the same kind of run.
+            if existing['swept'] == want_sweep:
+                print(f"  skip {model}/{sequence} (exists: {existing['summary']})")
+                continue
+            print(f"  redo {model}/{sequence} (exists but {existing['summary']}; "
+                  f"{'sweep' if want_sweep else 'single window'} requested)")
         print(f"\n===== {model}/{sequence} =====", flush=True)
         t0 = time.time()
         # Output streams straight through: a swept run takes an hour and its
