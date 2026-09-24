@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kyurem — trajectory</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <h1><a href="index.html" style="color:inherit">Kyurem</a></h1>
+  <span class="sub" id="crumb"></span>
+  <span class="spacer" style="flex:1"></span>
+  <label class="sub">model
+    <select id="modelSel"></select>
+  </label>
+</header>
+<main>
+  <div class="run-wrap">
+    <div class="panel">
+      <div class="controls">
+        <button id="axTrade" class="on">ΔV / time trade</button>
+        <button id="axPork">Launch / arrival porkchop</button>
+        <span class="spacer"></span>
+        <button id="frontOnly">Front only</button>
+      </div>
+      <div id="scatter"></div>
+      <p class="muted" id="scatterHint">Click a point to inspect. Ringed points are Pareto-optimal; only detailed points are clickable.</p>
+    </div>
+    <div class="panel detail" id="detail">
+      <p class="placeholder">Select a trajectory on the left.</p>
+    </div>
+  </div>
+</main>
+<script src="vendor/plotly.min.js"></script>
+<script src="kepler.js"></script>
+<script src="run.js"></script>
+</body>
+</html>

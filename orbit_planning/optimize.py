@@ -31,11 +31,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pygmo as pg
 
 import mission
+import models
 
 
 def optimise(n_islands, pop_size, gen, rounds, seed=None, launch_window=None,
-             quiet=False):
-    prob = pg.problem(mission.build_udp(launch_window=launch_window))
+             quiet=False, model='capture', sequence=mission.DEFAULT_SEQUENCE):
+    # Wrap every model so a bad-point fitness exception becomes a penalty, not a
+    # crash (NLopt COBYLA in the polish steps outside the box).
+    udp = models.safe(models.build(model, sequence, launch_window=launch_window))
+    prob = pg.problem(udp)
+    # NEP is a constrained Sims-Flanagan NLP; SADE only optimises unconstrained
+    # problems, so fold the match-point constraints into a penalty first.
+    if models.get(model)['needs_unconstrain']:
+        prob = pg.problem(pg.unconstrain(prob, method='kuri'))
     algo = pg.algorithm(pg.sade(gen=gen, memory=True))
 
     # Migration happens between evolution rounds, so the rounds count is also
@@ -100,7 +108,7 @@ def sweep(args):
     launch-window scan you actually want to look at.
     """
     slices = mission.launch_slices(width_days=args.slice_width,
-                                   overlap=args.overlap)
+                                   overlap=args.overlap, sequence=args.sequence)
     print(f"sweeping {len(slices)} launch slices "
           f"({args.islands} islands x pop {args.pop}, "
           f"{args.rounds} rounds x {args.gen} gen each)")
@@ -109,7 +117,8 @@ def sweep(args):
     results, t_all = [], time.time()
     for i, window in enumerate(slices):
         dv, x, wall = optimise(args.islands, args.pop, args.gen, args.rounds,
-                               args.seed, launch_window=window, quiet=True)
+                               args.seed, launch_window=window, quiet=True,
+                               model=args.model, sequence=args.sequence)
         launch = mission.mjd2000_to_datetime(x[0]).strftime('%Y-%m-%d')
         print(f"{i:3d}  {window[0].mjd:10.1f}  {window[1].mjd:10.1f}  "
               f"{dv:10.0f}  {launch:>12}  {wall:6.1f}")
@@ -143,12 +152,16 @@ def sweep(args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--model', default='capture',
+                    choices=sorted(models.MODELS), help='propulsion/objective model')
+    ap.add_argument('--sequence', default=mission.DEFAULT_SEQUENCE,
+                    help='flyby sequence string, e.g. EVEEJN (Earth->Neptune)')
     ap.add_argument('--islands', type=int, default=20)
     ap.add_argument('--pop', type=int, default=60)
     ap.add_argument('--gen', type=int, default=250)
     ap.add_argument('--rounds', type=int, default=16)
     ap.add_argument('--seed', type=int, default=None)
-    ap.add_argument('--out', type=Path, default=mission.CHAMPION_PATH)
+    ap.add_argument('--out', type=Path, default=None)
     ap.add_argument('--sweep', action='store_true',
                     help='partition the launch window into synodic slices and '
                          'search each one separately')
@@ -160,6 +173,12 @@ def main():
     ap.add_argument('--slices-out', type=Path, dest='slices_out',
                     default=mission.HERE / 'slices.json')
     args = ap.parse_args()
+    if args.out is None:
+        outdir = mission.RESULTS_DIR / args.model / args.sequence
+        outdir.mkdir(parents=True, exist_ok=True)
+        args.out = outdir / 'champion.json'
+    if args.slices_out == mission.HERE / 'slices.json':
+        args.slices_out = args.out.parent / 'slices.json'
 
     if args.sweep:
         best, settings = sweep(args)
@@ -167,10 +186,12 @@ def main():
         settings = dict(settings, best_slice=best['slice'])
     else:
         best_dv, best_x, wall = optimise(args.islands, args.pop, args.gen,
-                                         args.rounds, args.seed)
+                                         args.rounds, args.seed,
+                                         model=args.model, sequence=args.sequence)
         settings = {'islands': args.islands, 'pop': args.pop, 'gen': args.gen,
                     'rounds': args.rounds, 'seed': args.seed,
                     'topology': 'ring', 'wall_seconds': round(wall, 1),
+                    'model': args.model, 'sequence': args.sequence,
                     **mission.objective_config()}
 
     # Do not silently overwrite a better champion. Compare against the current
@@ -179,7 +200,8 @@ def main():
     if args.out.is_file():
         try:
             prev = json.loads(args.out.read_text())
-            prev_dv = mission.build_udp().fitness(prev['x'])[0]
+            prev_dv = models.get(args.model)['cost_of'](
+                pg.problem(models.build(args.model, args.sequence)).fitness(prev['x']))
             if prev_dv < best_dv:
                 print(f"\nREFUSING to overwrite {args.out}: the existing champion "
                       f"scores {prev_dv:.0f} m/s under the current objective, "

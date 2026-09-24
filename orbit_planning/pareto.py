@@ -22,17 +22,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pygmo as pg
 
 import mission
+import models
 
 PARETO_PATH = mission.HERE / "pareto.json"
 
 
 def search(n_islands, pop_size, gen, rounds, seed=None, launch_window=None,
-           quiet=False):
+           quiet=False, model='capture', sequence=mission.DEFAULT_SEQUENCE):
     if pop_size % 4:
         raise ValueError(f"NSGA-II needs a population size divisible by 4, got {pop_size}")
 
-    prob = pg.problem(mission.build_udp(multi_objective=True,
-                                        launch_window=launch_window))
+    udp = models.safe(models.build(model, sequence, launch_window=launch_window,
+                                   multi_objective=True))
+    prob = pg.problem(udp)
+    if models.get(model)['needs_unconstrain']:
+        prob = pg.problem(pg.unconstrain(prob, method='kuri'))
     algo = pg.algorithm(pg.nsga2(gen=gen))
 
     kwargs = dict(n=n_islands, algo=algo, prob=prob, pop_size=pop_size, t=pg.ring())
@@ -96,7 +100,7 @@ def sweep(args):
     front is the true global front, not a union of per-slice fronts.
     """
     slices = mission.launch_slices(width_days=args.slice_width,
-                                   overlap=args.overlap)
+                                   overlap=args.overlap, sequence=args.sequence)
     print(f"sweeping {len(slices)} launch slices "
           f"({args.islands} islands x pop {args.pop}, "
           f"{args.rounds} rounds x {args.gen} gen each)")
@@ -105,7 +109,8 @@ def sweep(args):
     pooled, t_all = [], time.time()
     for i, window in enumerate(slices):
         pts, wall = search(args.islands, args.pop, args.gen, args.rounds,
-                           args.seed, launch_window=window, quiet=True)
+                           args.seed, launch_window=window, quiet=True,
+                           model=args.model, sequence=args.sequence)
         for pt in pts:
             pt['slice'] = i
         best = min(p['dv_ms'] for p in pts)
@@ -127,12 +132,16 @@ def sweep(args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--model', default='capture',
+                    choices=sorted(models.MODELS), help='propulsion/objective model')
+    ap.add_argument('--sequence', default=mission.DEFAULT_SEQUENCE,
+                    help='flyby sequence string, e.g. EVEEJN')
     ap.add_argument('--islands', type=int, default=8)
     ap.add_argument('--pop', type=int, default=100)
     ap.add_argument('--gen', type=int, default=200)
     ap.add_argument('--rounds', type=int, default=10)
     ap.add_argument('--seed', type=int, default=None)
-    ap.add_argument('--out', type=Path, default=PARETO_PATH)
+    ap.add_argument('--out', type=Path, default=None)
     ap.add_argument('--sweep', action='store_true',
                     help='partition the launch window into synodic slices and '
                          'run NSGA-II on each, so every launch opportunity is '
@@ -142,11 +151,16 @@ def main():
     ap.add_argument('--overlap', type=float, default=0.2,
                     help='fractional overlap between adjacent slices')
     args = ap.parse_args()
+    if args.out is None:
+        outdir = mission.RESULTS_DIR / args.model / args.sequence
+        outdir.mkdir(parents=True, exist_ok=True)
+        args.out = outdir / 'pareto.json'
 
     if args.sweep:
         points, wall = sweep(args)
     else:
-        points, wall = search(args.islands, args.pop, args.gen, args.rounds, args.seed)
+        points, wall = search(args.islands, args.pop, args.gen, args.rounds, args.seed,
+                              model=args.model, sequence=args.sequence)
 
     front = [p for p in points if p['pareto']]
     best_dv = min(front, key=lambda p: p['dv_ms'])
@@ -163,7 +177,8 @@ def main():
                      'swept': args.sweep,
                      'slice_width_days': args.slice_width if args.sweep else None,
                      'overlap': args.overlap if args.sweep else None,
-                     **mission.objective_config(mission.build_udp(multi_objective=True))},
+                     'model': args.model, 'sequence': args.sequence,
+                     **mission.objective_config()},
         'points': points,
     }, indent=2))
     print(f"wrote {args.out}  ({len(points)} points)")
