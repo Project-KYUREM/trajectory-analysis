@@ -11,3 +11,8 @@ dependencies:
   - nlopt
   - spiceypy
   - matplotlib
+  - pyoptsparse
+  - pip
+  - pip:
+      - openmdao
+      - dymos

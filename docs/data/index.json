@@ -18,6 +18,22 @@
   },
   {
     "model": "ballistic",
+    "sequence": "EN",
+    "labels": [
+      "Earth",
+      "Neptune"
+    ],
+    "cost_label": "Departure Delta-V (launch energy)",
+    "cost_units": "m/s",
+    "n_points": 66024,
+    "n_front": 2933,
+    "n_detail": 2965,
+    "best_cost": 10821.581286441498,
+    "best_tof_years": 30.455736714720334,
+    "path": "data/ballistic/EN/cloud.json"
+  },
+  {
+    "model": "ballistic",
     "sequence": "EVEEJN",
     "labels": [
       "Earth",
@@ -109,6 +125,22 @@
     "best_cost": 4253.680486548161,
     "best_tof_years": 27.745845880482772,
     "path": "data/capture/EJN/cloud.json"
+  },
+  {
+    "model": "capture",
+    "sequence": "EN",
+    "labels": [
+      "Earth",
+      "Neptune"
+    ],
+    "cost_label": "Delta-V \u2014 deep-space maneuvers + capture",
+    "cost_units": "m/s",
+    "n_points": 66024,
+    "n_front": 2162,
+    "n_detail": 2193,
+    "best_cost": 7206.987028139173,
+    "best_tof_years": 30.564423234637637,
+    "path": "data/capture/EN/cloud.json"
   },
   {
     "model": "capture",
