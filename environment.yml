@@ -8,11 +8,14 @@ dependencies:
   - pykep
   - scipy
   - ipopt
+  - cyipopt          # exposes IPOPT to pyOptSparse (aerocapture/)
   - nlopt
   - spiceypy
   - matplotlib
+  - pytest           # aerocapture/tests
   - pyoptsparse
   - pip
   - pip:
       - openmdao
       - dymos
+      - -e .           # the aerocapture package (pyproject.toml)

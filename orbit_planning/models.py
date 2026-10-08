@@ -1,22 +1,16 @@
-"""Propulsion / objective models behind one shared pipeline.
+"""Define the propulsion and objective models behind the shared search pipeline.
 
-Pick a model with ``--model``; ``optimize.py``, ``pareto.py``, ``publish.py``
-and the site are otherwise identical, and results land in
-``results/<model>/<sequence>/``.
+A ``Model`` holds everything model-specific: how to build its pykep UDP,
+decode a decision vector and read the headline cost, plus the provenance
+stamped into ``results/<model>/<sequence>/``. ``capture`` is ``mga_1dsm`` with
+orbit insertion (cost: deep-space maneuvers plus the capture burn).
+``ballistic`` is ``mga`` with gravity assists only and a flyby arrival (cost:
+departure delta-v beyond the launch-vinf allowance). ``nep`` is a constrained
+Sims-Flanagan ``mga_lt_nep`` that serves as a GMAT seed and has no decoder.
 
-    capture    mga_1dsm with orbit insertion. Cost = deep-space maneuvers plus
-               the burn into a loose capture ellipse at the destination.
-    ballistic  Trident-style mga: gravity assists only, flyby arrival. Cost =
-               departure delta-v beyond the launch-vinf allowance. Arrival vinf
-               is reported, never charged.
-    nep        40 kWe nuclear-electric low thrust (mga_lt_nep). A constrained
-               Sims-Flanagan problem that builds and runs but is not decoded or
-               published: its role here is a GMAT seed exported from an
-               impulsive solution (see README).
-
-Everything model-specific lives on a ``Model``: how to build the pykep UDP,
-how to decode a decision vector, how to read the headline cost, and the
-provenance to stamp into results. Runners never branch on a model name.
+For every model ``x[0]`` is the launch epoch in MJD2000, the only gene code
+outside this module may read; every other gene is reached through
+``Model.decode``.
 """
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Sequence
@@ -37,11 +31,10 @@ import mission
 
 
 class SafeUDP:
-    """Wrap a pykep UDP so a fitness exception becomes a penalty, not a crash.
+    """Wrap a pykep UDP so a failed fitness evaluation returns a penalty vector.
 
-    Global samplers and NLopt's COBYLA (which steps outside the box) routinely
-    probe decision vectors that push an epoch past kernel coverage or a
-    hyperbola past a valid conic. Without this one bad query kills the run.
+    Global samplers and COBYLA probe vectors beyond kernel coverage or valid
+    conics; the penalty keeps one such query from ending the run.
     """
 
     # Far above any real cost (m/s or kg) yet small enough that pygmo's
@@ -49,14 +42,14 @@ class SafeUDP:
     PENALTY = 1e6
 
     def __init__(self, udp):
-        """Cache the shape of ``udp`` so the penalty vector needs no probing."""
+        """Wrap a pykep UDP and cache its dimensions and bounds."""
         self._udp = udp
         prob = pg.problem(udp)
         self._nobj, self._nec, self._nic = prob.get_nobj(), prob.get_nec(), prob.get_nic()
         self._bounds = prob.get_bounds()
 
     def fitness(self, x):
-        """Delegate, returning a uniform penalty vector on any failure or NaN."""
+        """Return the wrapped fitness, or a uniform ``PENALTY`` vector on any failure."""
         try:
             f = self._udp.fitness(x)
             if any(v != v or abs(v) == float('inf') for v in f):
@@ -66,40 +59,43 @@ class SafeUDP:
             return [self.PENALTY] * (self._nobj + self._nec + self._nic)
 
     def get_bounds(self):
-        """Bounds of the wrapped problem."""
+        """Return the bounds of the wrapped problem."""
         return self._bounds
 
     def get_nobj(self):
-        """Number of objectives of the wrapped problem."""
+        """Return the number of objectives of the wrapped problem."""
         return self._nobj
 
     def get_nec(self):
-        """Number of equality constraints of the wrapped problem."""
+        """Return the number of equality constraints of the wrapped problem."""
         return self._nec
 
     def get_nic(self):
-        """Number of inequality constraints of the wrapped problem."""
+        """Return the number of inequality constraints of the wrapped problem."""
         return self._nic
 
 
 @dataclass(frozen=True)
 class Decoded:
-    """A decision vector, read back in model-neutral terms.
+    """Hold a decision vector decoded into model-neutral terms.
 
-    Attributes:
-        leg_tof_days: Time of flight of each leg.
-        leg_dsm_ms: Deep-space maneuver per leg; empty when the model has none.
-        flyby_mismatch_ms: Per flyby, the velocity change the gravity assist
-            cannot supply and a burn must (``ballistic`` only; ``mga_1dsm``
-            makes its flybys consistent by construction, so empty there).
-        lamberts: pykep Lambert solutions, one per leg.
-        arc_states: ``(r, v)`` at the start of each ballistic arc, heliocentric
-            ECLIPJ2000, metres and m/s.
-        arc_epochs: MJD2000 epoch of each arc start.
-        capture_dv_ms: Insertion burn at the destination, or ``None`` for a flyby.
-        flyby_rp_radii: Periapsis of each flyby in planet radii, if the model
-            has it as a free parameter.
-        flyby_beta_rad: Flyby plane rotation angle per flyby, likewise.
+    Args:
+        leg_tof_days (list[float]): Time of flight of each leg, in days.
+        leg_dsm_ms (list[float]): Deep-space maneuver of each leg, in m/s; empty
+            when the model has none.
+        flyby_mismatch_ms (list[float]): Velocity change per flyby that a burn
+            must supply, in m/s; empty when the model's flybys are consistent by
+            construction.
+        lamberts (list[pykep.lambert_problem]): Lambert solution of each leg.
+        arc_states (list[tuple]): ``(r, v)`` at the start of each ballistic arc,
+            heliocentric ECLIPJ2000, in m and m/s.
+        arc_epochs (list[float]): MJD2000 epoch of each arc start.
+        capture_dv_ms (Optional[float]): Insertion burn at the destination in
+            m/s, or ``None`` for a flyby arrival.
+        flyby_rp_radii (list[float], optional): Periapsis of each flyby in planet
+            radii, when the model has it as a gene. Defaults to None.
+        flyby_beta_rad (list[float], optional): Plane rotation angle of each
+            flyby in radians, when the model has it as a gene. Defaults to None.
     """
     leg_tof_days: list
     leg_dsm_ms: list
@@ -114,21 +110,24 @@ class Decoded:
 
 @dataclass(frozen=True)
 class Model:
-    """One propulsion / objective model.
+    """Describe one propulsion and objective model.
 
-    Attributes:
-        name: CLI name (``--model``) and results directory.
-        label: Plain-language name of the cost axis, for plots.
-        units: Units of the cost axis.
-        blurb: One-line description shown on the site.
-        objective: Provenance recorded into every result file.
-        build: ``(setup, multi_objective) -> pykep UDP``.
-        decode: ``(udp, x) -> Decoded``, or ``None`` if the model is not
-            decodable; ``publish.py`` skips such models and
-            ``trajectory.describe`` refuses them.
-        cost_of: Headline scalar from a fitness vector.
-        constrained: Whether the UDP carries constraints that heuristic
-            optimisers need folded into a penalty (``pg.unconstrain``).
+    Args:
+        name (str): CLI name for ``--model`` and the results directory.
+        label (str): Plain-language name of the cost axis.
+        units (str): Units of the cost axis.
+        blurb (str): One-line description shown on the site.
+        objective (dict): Provenance recorded into every result file.
+        build (Callable[[mission.Setup, bool], object]): Builds the pykep UDP
+            from a ``Setup`` and a multi-objective flag.
+        decode (Callable[[object, Sequence[float]], Decoded], optional): Decodes
+            ``(udp, x)``; ``None`` marks the model as not decodable, so
+            ``publish.py`` skips it and ``trajectory.describe`` refuses it.
+            Defaults to None.
+        cost_of (Callable[[Sequence[float]], float], optional): Headline cost from
+            a fitness vector. Defaults to the first fitness element.
+        constrained (bool, optional): Whether ``problem()`` folds the UDP's
+            constraints into a penalty. Defaults to False.
     """
     name: str
     label: str
@@ -143,20 +142,17 @@ class Model:
 
 # ----------------------------------------------------------------- capture --
 def _build_capture(setup, multi_objective):
-    """mga_1dsm pricing the final term as a periapsis burn into a capture ellipse.
+    """Build an ``mga_1dsm`` that prices arrival as a burn into the capture ellipse.
 
-    Arrival vinf is the speed relative to the destination while still far
-    away, not the cost of arriving: the burn happens at periapsis, where
-    gravity has already accelerated the craft to near escape speed, and only
-    the sliver above escape speed is shed. Charging raw vinf would overprice
-    arrival ~10x and bias the search towards needlessly slow trajectories.
+    The burn happens at periapsis, where it sheds only the speed above escape
+    speed, so it costs far less than the raw arrival vinf.
 
     Args:
-        setup: Resolved sequence and bounds.
-        multi_objective: Fitness becomes ``(cost, tof)`` when true.
+        setup (mission.Setup): Resolved sequence and bounds.
+        multi_objective (bool): Make the fitness ``(cost, tof)``.
 
     Returns:
-        A ``pk.trajopt.mga_1dsm`` instance.
+        pykep.trajopt.mga_1dsm: The UDP.
     """
     capture = setup.destination['capture']
     return pk.trajopt.mga_1dsm(
@@ -175,19 +171,17 @@ def _build_capture(setup, multi_objective):
 
 
 def _decode_capture(udp, x):
-    """Read an mga_1dsm decision vector.
+    """Decode an ``mga_1dsm`` decision vector.
 
-    Uses pykep's ``_compute_dvs`` (a 5-tuple: per-leg dv with the capture burn
-    last, Lambert legs, leg times, arc start states, arc epochs). Flyby
-    periapsis and plane angle are the two genes at offsets 7+4i and 6+4i (see
-    the layout at the top of this module).
+    Flyby ``i`` has its plane angle at gene ``6 + 4i`` and its periapsis ratio at
+    gene ``7 + 4i``.
 
     Args:
-        udp: The ``mga_1dsm`` the vector belongs to.
-        x: Decision vector.
+        udp (pykep.trajopt.mga_1dsm): The UDP the vector belongs to.
+        x (Sequence[float]): Decision vector.
 
     Returns:
-        A ``Decoded``.
+        Decoded: The decoded trajectory.
     """
     dv, lamberts, tof, arcs, epochs = udp._compute_dvs(x)
     n_flybys = len(udp._seq) - 2
@@ -206,7 +200,7 @@ def _decode_capture(udp, x):
 
 # --------------------------------------------------------------- ballistic --
 def _build_ballistic(setup, multi_objective):
-    """Trident-style mga: no deep-space maneuvers, flyby arrival (no capture)."""
+    """Build an ``mga`` with gravity assists only and a flyby arrival."""
     return pk.trajopt.mga(
         seq=setup.planets,
         t0=setup.window,
@@ -219,18 +213,15 @@ def _build_ballistic(setup, multi_objective):
 
 
 def _decode_ballistic(udp, x):
-    """Read an mga decision vector.
-
-    Uses pykep's ``_compute_dvs`` (an 8-tuple: launch dv, per-flyby mismatch,
-    arrival dv, Lambert legs, total launch dv, leg times, arc states, arc
-    epochs). Flyby geometry is implied by the Lambert arcs, not a gene.
+    """Decode an ``mga`` decision vector.
 
     Args:
-        udp: The ``mga`` the vector belongs to.
-        x: Decision vector.
+        udp (pykep.trajopt.mga): The UDP the vector belongs to.
+        x (Sequence[float]): Decision vector.
 
     Returns:
-        A ``Decoded``.
+        Decoded: The decoded trajectory; flyby geometry follows from the Lambert
+        arcs.
     """
     _, dv_flyby, dv_arrival, lamberts, _, tof, arcs, epochs = udp._compute_dvs(x)
     return Decoded(
@@ -250,19 +241,18 @@ NEP_PARAMS = dict(Tmax=1.0, Isp=3500.0, wet_mass=4000.0,
 
 
 def _build_nep(setup, multi_objective):
-    """40 kWe flagship NEP as a Sims-Flanagan ``mga_lt_nep``.
+    """Build the 40 kWe nuclear-electric Sims-Flanagan ``mga_lt_nep`` problem.
 
-    Unlike the impulsive models this problem has no single total-TOF gene, so
-    each leg gets its own bounds: at least a month, at most the mission cap.
-    It also carries match-point constraints, which is why ``constrained`` is
-    set and ``problem()`` folds them into a penalty.
+    Each leg has its own time-of-flight bounds, from 30 days to the mission cap.
+    The problem carries match-point constraints, so its ``Model`` sets
+    ``constrained``.
 
     Args:
-        setup: Resolved sequence and bounds.
-        multi_objective: Fitness becomes ``(-final_mass, tof)`` when true.
+        setup (mission.Setup): Resolved sequence and bounds.
+        multi_objective (bool): Make the fitness ``(-final_mass, tof)``.
 
     Returns:
-        A ``pk.trajopt.mga_lt_nep`` instance.
+        pykep.trajopt.mga_lt_nep: The UDP.
     """
     n_legs = len(setup.planets) - 1
     return pk.trajopt.mga_lt_nep(
@@ -309,44 +299,61 @@ MODELS = {m.name: m for m in (
 
 
 def get(name):
-    """Look up a model by name with a helpful error."""
+    """Look up a model by name.
+
+    Args:
+        name (str): Model name.
+
+    Returns:
+        Model: The registered model.
+
+    Raises:
+        ValueError: If ``name`` is not in ``MODELS``.
+    """
     if name not in MODELS:
         raise ValueError(f"unknown model {name!r}; choose from {sorted(MODELS)}")
     return MODELS[name]
 
 
 def build(name, sequence, launch_window=None, tof_days=None, multi_objective=False):
-    """Construct the raw pykep UDP for a model and sequence.
+    """Build the raw pykep UDP for a model and sequence.
 
     Args:
-        name: Model name.
-        sequence: Sequence string, e.g. ``"EVEEJN"``.
-        launch_window: Optional ``[epoch, epoch]`` override.
-        tof_days: Optional ``[min, max]`` total-TOF override.
-        multi_objective: Fitness becomes ``(cost, tof)`` when true.
+        name (str): Model name.
+        sequence (str): Sequence string, such as ``"EVEEJN"``.
+        launch_window (list[pykep.epoch], optional): ``[start, end]`` launch
+            window override. Defaults to None.
+        tof_days (list[float], optional): ``[min, max]`` total time-of-flight
+            override in days. Defaults to None.
+        multi_objective (bool, optional): Make the fitness ``(cost, tof)``.
+            Defaults to False.
 
     Returns:
-        The unwrapped pykep UDP (use ``problem()`` for something optimisable).
+        object: The unwrapped pykep UDP (``mga_1dsm``, ``mga`` or
+        ``mga_lt_nep``); ``problem()`` gives an optimiser-ready version.
     """
     setup = mission.resolve_bounds(sequence, launch_window, tof_days)
     return get(name).build(setup, multi_objective)
 
 
 def problem(name, sequence, launch_window=None, tof_days=None, multi_objective=False):
-    """Build an optimiser-ready ``pg.problem``: safe-wrapped, constraints folded.
+    """Build an optimiser-ready ``pg.problem`` for a model and sequence.
 
-    This is the one place the wrapping recipe lives; every runner, scorer and
-    polish worker calls it, so a new constrained model needs no caller edits.
+    The UDP is wrapped in ``SafeUDP``, and a constrained model's constraints are
+    folded into a penalty with ``pg.unconstrain``.
 
     Args:
-        name: Model name.
-        sequence: Sequence string.
-        launch_window: Optional ``[epoch, epoch]`` override.
-        tof_days: Optional ``[min, max]`` total-TOF override.
-        multi_objective: Fitness becomes ``(cost, tof)`` when true.
+        name (str): Model name.
+        sequence (str): Sequence string.
+        launch_window (list[pykep.epoch], optional): ``[start, end]`` launch
+            window override. Defaults to None.
+        tof_days (list[float], optional): ``[min, max]`` total time-of-flight
+            override in days. Defaults to None.
+        multi_objective (bool, optional): Make the fitness ``(cost, tof)``.
+            Defaults to False.
 
     Returns:
-        A ``pg.problem`` ready for any pygmo algorithm.
+        pygmo.problem: The problem, ready for any pygmo algorithm.
     """
     udp = SafeUDP(build(name, sequence, launch_window, tof_days, multi_objective))
     prob = pg.problem(udp)

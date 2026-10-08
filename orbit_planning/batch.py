@@ -1,13 +1,10 @@
-"""Run ``pareto.py`` over a matrix of (model, sequence) pairs.
+"""Run ``pareto.py`` for every (model, sequence) pair in a matrix.
 
-    python orbit_planning/batch.py --models capture,ballistic \
-        --sequences EVEEJN,EVEJN --sweep --polish 24 --islands 20
-
-Every option this script does not recognise is forwarded to ``pareto.py``
-unchanged, so the batch owns only the matrix, skipping and tallying.
-Resumable: a pair whose ``pareto.json`` already exists is skipped unless
-``--force``. Each pair is its own process (the mp_island / spawn guard lives
-in ``pareto.py``). This module stays kernel-free on purpose.
+Example: ``python orbit_planning/batch.py --models capture,ballistic
+--sequences EVEEJN,EVEJN --sweep``. Options this script does not recognise are
+forwarded to ``pareto.py`` unchanged, and each pair runs in its own process.
+A pair whose ``pareto.json`` already holds the same kind of run (swept or
+single window) is skipped unless ``--force`` is given.
 """
 import argparse
 import json
@@ -22,14 +19,14 @@ PARETO = Path(__file__).resolve().with_name('pareto.py')
 
 
 def _existing_run(path):
-    """Describe a previous result so a skip is never opaque.
+    """Describe a previous result so a skip reports what it found.
 
     Args:
-        path: The pair's ``pareto.json``.
+        path (pathlib.Path): The pair's ``pareto.json``.
 
     Returns:
-        ``None`` if absent, else ``{'swept': bool, 'summary': str}`` read from
-        the file's ``settings`` (islands, generations, slices, polish, wall).
+        dict or None: ``None`` if the file is absent, else
+        ``{'swept': bool, 'summary': str}`` built from the file's ``settings``.
     """
     if not path.is_file():
         return None
@@ -46,7 +43,7 @@ def _existing_run(path):
 
 
 def main():
-    """CLI: run pareto.py for each (model, sequence) pair not yet done."""
+    """Run ``pareto.py`` for each (model, sequence) pair not already done."""
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter,
                                      epilog='unrecognised options are forwarded to pareto.py')

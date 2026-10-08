@@ -1,4 +1,5 @@
 # %%
+"""Inspect one saved champion trajectory in interactive ``# %%`` cells."""
 # Interactive notebook (VS Code "# %%" cells) for inspecting one champion.
 #
 # The search itself never runs here: pygmo drives pykep problems through

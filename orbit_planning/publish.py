@@ -1,21 +1,10 @@
 """Compact raw results into the static site payload under ``docs/data/``.
 
-The browser never touches SPICE or the multi-megabyte raw clouds. Per run this
-writes ``docs/data/<model>/<sequence>/cloud.json``:
-
-    points[]     the whole cloud, compact: id, cost, tof, launch epoch, flags
-                 (``pareto``, ``polished``, ``detail``) -- for the scatter
-    detail{}     ``trajectory.describe()`` for every point flagged ``detail``:
-                 the front, polished points, and a few cheapest dominated
-                 points per time-of-flight bin. The blob is context, not
-                 clickable, so it carries no detail.
-    frames       the constant ECLIPJ2000 -> EME2000 rotation, so the site can
-                 export equatorial states without shipping both frames
-
-plus one shared ``docs/data/planets.json`` (orbit polylines for 3D context,
-identical across runs so stored once) and ``docs/data/index.json``, the
-gallery manifest. Floats are rounded at this boundary: 17-digit tails are
-noise that also gzips badly.
+Each run becomes ``docs/data/<model>/<sequence>/cloud.json``: every point of
+the cloud, a ``trajectory.describe()`` for each point flagged ``detail``, and
+the ECLIPJ2000 to EME2000 rotation. ``planets.json`` (orbit polylines shared
+by all runs) and ``index.json`` (the gallery manifest) are written alongside.
+Floats are rounded to a per-key precision.
 """
 import argparse
 import json
@@ -36,7 +25,17 @@ _PRECISION = {
 
 
 def compact(obj, key=None):
-    """Round every float in a nested structure by its key's precision."""
+    """Round every float in a nested structure to its key's precision.
+
+    Args:
+        obj (Any): Float, dict, list or tuple to compact; other values pass
+            through unchanged.
+        key (str, optional): JSON key ``obj`` sits under, looked up in
+            ``_PRECISION``; list items inherit it. Defaults to None.
+
+    Returns:
+        Any: A copy of ``obj`` with its floats rounded.
+    """
     if isinstance(obj, float):
         return round(obj, _PRECISION.get(key, 4))
     if isinstance(obj, dict):
@@ -47,15 +46,16 @@ def compact(obj, key=None):
 
 
 def discover_runs(model_filter=None, sequence_filter=None):
-    """``(model, sequence)`` pairs with a raw ``pareto.json`` and a decodable model.
+    """List the runs that have a raw ``pareto.json`` and a decodable model.
 
     Args:
-        model_filter: Model names to keep, or ``None`` for all.
-        sequence_filter: Sequence strings to keep, or ``None`` for all.
+        model_filter (list[str], optional): Model names to keep; ``None`` keeps
+            all. Defaults to None.
+        sequence_filter (list[str], optional): Sequence strings to keep; ``None``
+            keeps all. Defaults to None.
 
     Returns:
-        Sorted list of ``(model, sequence)``. Models without a decoder (nep)
-        are skipped: there is nothing to show for them.
+        list[tuple[str, str]]: Sorted ``(model, sequence)`` pairs.
     """
     runs = []
     for raw in sorted(paths.RESULTS_DIR.glob('*/*/pareto.json')):
@@ -71,18 +71,17 @@ def discover_runs(model_filter=None, sequence_filter=None):
 
 
 def select_detail(points, per_bin=2, bins=14):
-    """Flag which points get a full description (sets ``detail`` in place).
+    """Flag in place which points get a full trajectory description.
 
-    All front and polished points, plus the ``per_bin`` cheapest dominated
-    points in each of ``bins`` time-of-flight bins, so a reader can still click
-    into a representative dominated trajectory without the payload carrying a
-    description for every point of the blob.
+    Every front and polished point is flagged, plus the ``per_bin`` cheapest
+    dominated points in each time-of-flight bin.
 
     Args:
-        points: Compact point records with ``pareto``, ``polished``,
-            ``tof_days`` and ``cost``.
-        per_bin: Dominated points to keep per bin.
-        bins: Number of equal-width time-of-flight bins.
+        points (list[dict]): Compact point records with ``pareto``, ``polished``,
+            ``tof_days`` and ``cost``; each gets a ``detail`` flag.
+        per_bin (int, optional): Dominated points to flag per bin. Defaults to 2.
+        bins (int, optional): Number of equal-width time-of-flight bins.
+            Defaults to 14.
     """
     for p in points:
         p['detail'] = p['pareto'] or p['polished']
@@ -96,14 +95,15 @@ def select_detail(points, per_bin=2, bins=14):
 
 
 def planet_orbits(labels, samples=160):
-    """One heliocentric orbit polyline per body label, for 3D context.
+    """Sample one heliocentric orbit polyline per body.
 
     Args:
-        labels: Body names to include.
-        samples: Points per orbit (160 keeps Neptune's circle smooth at a few KB).
+        labels (Iterable[str]): Body names to include.
+        samples (int, optional): Points per orbit. Defaults to 160.
 
     Returns:
-        ``{label: {period_days, xyz}}`` with positions in metres, ECLIPJ2000.
+        dict: ``{label: {'period_days': float, 'xyz': list}}`` with positions in
+        metres, ECLIPJ2000.
     """
     letters = {b['label']: letter for letter, b in mission.BODIES.items()}
     t0 = mission.LAUNCH_WINDOW[0].mjd2000
@@ -121,15 +121,15 @@ def publish_run(model_name, sequence):
     """Compact one raw result into its ``cloud.json``.
 
     Args:
-        model_name: Model of the run.
-        sequence: Sequence of the run.
+        model_name (str): Model of the run.
+        sequence (str): Sequence of the run.
 
     Returns:
-        The run's ``index.json`` entry.
+        dict: The run's ``index.json`` entry.
 
     Raises:
-        ValueError: If the raw file predates the current result schema;
-            re-run ``pareto.py`` for that pair.
+        ValueError: If the raw file's ``schema`` differs from
+            ``paths.RESULT_SCHEMA``.
     """
     raw = json.loads(paths.results_path(model_name, sequence, 'pareto.json').read_text())
     if raw.get('schema') != paths.RESULT_SCHEMA:
@@ -168,7 +168,7 @@ def publish_run(model_name, sequence):
 
 
 def main():
-    """CLI: publish every discovered run (optionally filtered) and the manifests."""
+    """Publish every discovered run, optionally filtered, and the shared manifests."""
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--models', default=None, help='comma list; default: every run found')

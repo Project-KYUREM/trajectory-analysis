@@ -1,26 +1,7 @@
-"""Decode a decision vector into a tool-agnostic mission description.
+"""Decode a decision vector into a model-independent mission description.
 
-``describe(model, sequence, x)`` returns one schema for every decodable model,
-so the publish step and the site never branch on model:
-
-    launch    epoch, C3, vinf vector, launch-asymptote RA/dec (EME2000)
-    legs      per-leg time of flight, dates, deep-space maneuver (if the
-              model has them)
-    flybys    body, epoch, periapsis radius and plane angle where the model
-              exposes them, and for the ballistic model the velocity
-              mismatch a burn must cover because the assist cannot
-    arrival   destination epoch, vinf vector and magnitude (the approach speed
-              far from the body), capture burn if the model inserts, and the
-              atmospheric entry speed once gravity has done its work
-    arcs      per ballistic arc: r, v, dt, mu -- a Kepler propagator (the
-              browser's ``kepler.js`` or GMAT) rebuilds the whole trajectory
-              from these alone
-    totals    headline cost, time of flight, maneuver sum
-
-States are heliocentric ECLIPJ2000 (pykep's frame). The constant
-ECLIPJ2000 -> J2000/EME2000 rotation is exported by ``publish.py`` so the site
-can produce the equatorial frame GMAT and STK default to; the CSV and GMAT
-exports themselves are generated client-side from this description.
+States are heliocentric ECLIPJ2000, the frame pykep uses; ``ECLIP_TO_EME``
+rotates them into J2000/EME2000. Epochs are MJD2000.
 """
 import math
 
@@ -35,53 +16,57 @@ ECLIP_TO_EME = np.array(spice.pxform('ECLIPJ2000', 'J2000', 0.0))
 
 
 def to_eme(vec):
-    """Rotate an ECLIPJ2000 vector into J2000 / EME2000."""
+    """Rotate an ECLIPJ2000 vector into J2000/EME2000."""
     return [float(c) for c in ECLIP_TO_EME @ np.asarray(vec, dtype=float)]
 
 
 def _ra_dec(vec):
-    """Right ascension and declination (degrees) of a direction vector."""
+    """Return the right ascension and declination, in degrees, of a direction vector."""
     x, y, z = vec
     return (math.degrees(math.atan2(y, x)) % 360.0,
             math.degrees(math.asin(z / float(np.linalg.norm(vec)))))
 
 
 def _date(mjd2000):
-    """ISO date-time string for an MJD2000 epoch."""
+    """Return the ISO date-time string of an MJD2000 epoch."""
     return mission.mjd2000_to_datetime(mjd2000).isoformat(timespec='seconds')
 
 
 def entry_speed(vinf_ms, body, planet):
-    """Speed at the atmospheric entry interface after falling into the well.
+    """Return the speed at the destination's atmospheric entry interface.
 
-    ``sqrt(vinf^2 + 2*mu/r)``: even ``vinf = 0`` gives the local escape speed
-    (~23 km/s at Neptune) -- one cannot arrive slowly at a giant planet.
+    The speed is ``sqrt(vinf^2 + 2*mu/r)``, so even ``vinf = 0`` gives the local
+    escape speed (about 23 km/s at Neptune).
 
     Args:
-        vinf_ms: Hyperbolic excess speed on arrival, m/s.
-        body: The destination's ``BODIES`` entry (radius, entry altitude).
-        planet: The destination's pykep planet (its GM).
+        vinf_ms (float): Hyperbolic excess speed on arrival, in m/s.
+        body (dict): The destination's ``mission.BODIES`` entry.
+        planet (pykep.planet.spice): The destination planet, which supplies its GM.
 
     Returns:
-        Entry speed in m/s.
+        float: Entry speed in m/s.
     """
     r = body['radius'] + body['entry_altitude_m']
     return math.sqrt(vinf_ms ** 2 + 2.0 * planet.mu_self / r)
 
 
 def describe(model_name, sequence, x):
-    """Decode one trajectory into the schema documented at the top of this module.
+    """Decode one trajectory into a JSON-serialisable mission description.
 
     Args:
-        model_name: A decodable model (``capture`` or ``ballistic``).
-        sequence: Sequence string the vector was optimised for.
-        x: The decision vector.
+        model_name (str): Name of a decodable model, ``capture`` or ``ballistic``.
+        sequence (str): Sequence string the vector was optimised for.
+        x (list[float]): Decision vector.
 
     Returns:
-        A JSON-serialisable dict; see the module docstring for its sections.
+        dict: Sections ``cost``, ``launch`` (epoch, C3, vinf, launch-asymptote
+        RA/dec in EME2000), ``legs``, ``flybys``, ``arrival`` (vinf, capture burn,
+        entry speed), ``totals`` and ``arcs``. Each ``arcs`` entry holds the
+        ``r``, ``v``, ``dt`` and ``mu`` a Kepler propagator needs to rebuild that
+        ballistic arc.
 
     Raises:
-        NotImplementedError: If the model has no decoder (``nep``).
+        NotImplementedError: If the model has no decoder.
     """
     model = models.get(model_name)
     if model.decode is None:

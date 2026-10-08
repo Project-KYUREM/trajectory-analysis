@@ -233,3 +233,7 @@ results/
 .vscode/
 PC_Linux_GCC_64bit/
 robots.txt
+
+# OpenMDAO / Dymos output directories (aerocapture/ redirects them under results/)
+*_out/
+reports/

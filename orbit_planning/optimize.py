@@ -1,14 +1,10 @@
-"""Single-objective search: the cheapest trajectory for one model and sequence.
+"""Find the cheapest trajectory for one model and sequence.
 
-    python orbit_planning/optimize.py --model ballistic --sequence EJN
-    python orbit_planning/optimize.py --sweep            # one search per launch slice
-
-Run as a script, never from a notebook cell. pykep's UDPs are Python objects
-(thread_safety.none), so pygmo drives them through mp_island, which forces
-multiprocessing's *spawn* context. spawn rebuilds each worker by re-importing
-``__main__``; if the search sat at module level in a notebook, every worker
-would re-run the notebook and try to spawn its own workers. The
-``if __name__ == '__main__'`` guard at the bottom is what stops that.
+Example: ``python orbit_planning/optimize.py --model ballistic --sequence EJN``;
+``--sweep`` runs one search per launch slice. Run it as a script, never from a
+notebook cell: pygmo evaluates pykep problems in spawned workers that
+re-import ``__main__``, and the ``if __name__ == '__main__'`` guard keeps them
+from re-running the search.
 """
 import argparse
 import json
@@ -22,20 +18,24 @@ import search
 
 
 def sade(gen):
-    """Self-adaptive differential evolution, pygmo's workhorse global optimiser."""
+    """Return pygmo's self-adaptive differential evolution for ``gen`` generations."""
     return pg.algorithm(pg.sade(gen=gen, memory=True))
 
 
 def optimise_champion(args, launch_window=None, log=print):
-    """Archipelago search followed by an MBH/COBYLA polish of the champion.
+    """Run an archipelago search, then polish its champion with MBH and COBYLA.
 
     Args:
-        args: Parsed CLI namespace (see ``search.add_search_args``).
-        launch_window: Optional ``[epoch, epoch]`` narrowing (slice sweep).
-        log: Print-like callable for progress lines.
+        args (argparse.Namespace): Parsed CLI arguments from
+            ``search.add_search_args``.
+        launch_window (list[pykep.epoch], optional): ``[start, end]`` launch
+            window; ``None`` uses the default window. Defaults to None.
+        log (Callable[[str], None], optional): Print-like callable for progress
+            lines. Defaults to print.
 
     Returns:
-        ``(cost, x, wall_seconds)`` for the best trajectory found.
+        tuple[float, list[float], float]: ``(cost, x, wall_seconds)`` of the best
+        trajectory found.
     """
     t0 = time.time()
     prob = models.problem(args.model, args.sequence, launch_window=launch_window)
@@ -56,22 +56,18 @@ def optimise_champion(args, launch_window=None, log=print):
 
 
 def sweep(args, slices_out):
-    """One archipelago per launch slice, then polish every slice champion at once.
+    """Search each launch slice separately, then polish every slice champion.
 
-    Launch opportunities recur at the first leg's synodic period, separated
-    by stretches of very poor delta-v. A single search over a multi-decade
-    window has to resolve every basin at once; per-slice searches are each as
-    easy as a narrow-window problem, and the table doubles as a launch-window
-    scan. The archipelagos run one after another because each already
-    saturates every core; the polishes, which are serial per point, run
-    together in a process pool afterwards.
+    The archipelagos run one after another because each uses every core; the
+    serial polishes then run together in a process pool.
 
     Args:
-        args: Parsed CLI namespace.
-        slices_out: Where to write the per-slice record (every champion kept).
+        args (argparse.Namespace): Parsed CLI arguments.
+        slices_out (pathlib.Path): File that receives every slice champion.
 
     Returns:
-        ``(best_slice_record, wall_seconds)``.
+        tuple[dict, float]: The best slice record and the total wall time in
+        seconds.
     """
     slices = mission.launch_slices(args.sequence, width_days=args.slice_width,
                                    overlap=args.overlap)
@@ -114,7 +110,7 @@ def sweep(args, slices_out):
 
 
 def main():
-    """CLI: search (or sweep), refuse to overwrite a better champion, write the result."""
+    """Search or sweep, then write the champion unless an existing one scores better."""
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     search.add_search_args(parser, islands=20, pop=60, gen=250, rounds=16)

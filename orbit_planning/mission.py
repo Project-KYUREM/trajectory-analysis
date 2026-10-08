@@ -1,13 +1,12 @@
-"""Shared mission physics: SPICE kernels, the body registry, sequences, bounds.
+"""Load the SPICE kernels and define the body registry, sequences and bounds.
 
-Kernel loading happens at import time on purpose. pygmo's mp_island ships a
-pickled problem to spawned worker processes, and a pickled ``pykep.planet.spice``
-is only ~250 bytes: target/observer strings plus the GMs. It resolves positions
-against whatever kernel pool the *child* has, so every process that touches a
-problem must furnsh the kernels itself. Importing this module guarantees that.
+Kernels load at import time, so every process that imports this module,
+including pygmo's spawned workers, has them: a pickled ``pykep.planet.spice``
+resolves positions against the kernel pool of the process it lands in.
 
-A sequence is a string over the letters in ``BODIES``, starting at Earth and
-ending at a body that defines capture parameters: ``"EVEEJN"``, ``"EJN"``, ...
+A sequence is a string of ``BODIES`` letters that starts at Earth and ends at
+a body with capture parameters, such as ``"EVEEJN"``. Stored epochs are
+MJD2000 (MJD - 51544.5); ``LAUNCH_WINDOW`` is quoted in MJD.
 """
 import datetime as _dt
 import math as _math
@@ -29,7 +28,11 @@ KERNELS = ("de440.bsp", "naif0012.tls", "pck00011.tpc", "gm_de440.tpc", "nep097.
 
 
 def _load_kernels():
-    """Furnsh every kernel into both pykep's and spiceypy's pool."""
+    """Load every kernel in ``KERNELS`` into both pykep's and spiceypy's pool.
+
+    Raises:
+        FileNotFoundError: If a kernel is missing from ``paths.DATA_DIR``.
+    """
     for kernel in KERNELS:
         path = paths.DATA_DIR / kernel
         if not path.is_file():
@@ -45,7 +48,14 @@ _load_kernels()
 
 
 def gm(body):
-    """Gravitational parameter of a SPICE body, in m^3/s^2 (kernel gives km^3/s^2)."""
+    """Return the gravitational parameter of a SPICE body.
+
+    Args:
+        body (str): SPICE body name, such as ``"NEPTUNE"``.
+
+    Returns:
+        float: GM in m^3/s^2.
+    """
     _, values = spice.bodvcd(spice.bodn2c(body), "GM", 1)
     return values[0] * 1e9
 
@@ -86,7 +96,7 @@ _planet_cache = {}
 
 
 def make_planet(letter):
-    """Heliocentric pykep planet for one registry letter (cached per process)."""
+    """Return the cached heliocentric pykep planet for one ``BODIES`` letter."""
     if letter not in _planet_cache:
         body = BODIES[letter]
         mu = pk.MU_EARTH if letter == 'E' else gm(body['gm_of'])
@@ -100,15 +110,15 @@ def make_sequence(sequence):
     """Validate a sequence string and resolve it to planets and labels.
 
     Args:
-        sequence: Letters from ``BODIES``, e.g. ``"EVEEJN"``. Case-insensitive.
+        sequence (str): ``BODIES`` letters, such as ``"EVEEJN"``; case-insensitive.
 
     Returns:
-        ``(planets, labels)``: the pykep planets in order and their names.
+        tuple[list[pykep.planet.spice], list[str]]: The planets in visiting order
+        and their names.
 
     Raises:
-        ValueError: If a letter is unknown, the sequence does not start at
-            Earth, or the final body has no capture parameters (cannot be a
-            destination).
+        ValueError: If a letter is unknown, the sequence does not start at Earth,
+            or the final body has no capture parameters.
     """
     sequence = sequence.upper().strip()
     unknown = set(sequence) - set(BODIES)
@@ -141,16 +151,15 @@ LAUNCH_WINDOW = [pk.epoch(68000, 'mjd'), pk.epoch(77500, 'mjd')]
 
 @dataclass(frozen=True)
 class Setup:
-    """Everything a model builder needs to construct a problem.
+    """Hold everything a model builder needs to construct a problem.
 
-    Attributes:
-        sequence: Upper-case sequence string.
-        planets: pykep planets in visiting order.
-        labels: Body names in visiting order.
-        destination: The ``BODIES`` entry of the final body (capture parameters,
-            entry altitude).
-        window: ``[pk.epoch, pk.epoch]`` launch window.
-        tof_days: ``[min, max]`` total time of flight in days.
+    Args:
+        sequence (str): Upper-case sequence string.
+        planets (list[pykep.planet.spice]): Planets in visiting order.
+        labels (list[str]): Body names in visiting order.
+        destination (dict): ``BODIES`` entry of the final body.
+        window (list[pykep.epoch]): ``[start, end]`` launch window.
+        tof_days (list[float]): ``[min, max]`` total time of flight in days.
     """
     sequence: str
     planets: list
@@ -161,16 +170,17 @@ class Setup:
 
 
 def resolve_bounds(sequence, launch_window=None, tof_days=None):
-    """Resolve a sequence plus optional overrides into a ``Setup``.
+    """Resolve a sequence and optional overrides into a ``Setup``.
 
     Args:
-        sequence: Sequence string, see ``make_sequence``.
-        launch_window: ``[epoch, epoch]`` override; the slice sweep narrows it.
-        tof_days: ``[min, max]`` override; the front polish pins a point to
-            its own time of flight with it.
+        sequence (str): Sequence string, see ``make_sequence``.
+        launch_window (list[pykep.epoch], optional): ``[start, end]`` launch
+            window; ``None`` uses ``LAUNCH_WINDOW``. Defaults to None.
+        tof_days (list[float], optional): ``[min, max]`` total time of flight in
+            days; ``None`` uses ``MISSION_TOF_DAYS``. Defaults to None.
 
     Returns:
-        A ``Setup`` with defaults filled from the module constants.
+        Setup: The resolved problem setup.
     """
     planets, labels = make_sequence(sequence)
     return Setup(
@@ -185,17 +195,15 @@ def resolve_bounds(sequence, launch_window=None, tof_days=None):
 
 # ------------------------------------------------- launch-window slicing ----
 def orbital_period(planet, epoch=None):
-    """Osculating period about the central body.
-
-    ``planet.spice`` exposes no ``period()``, so derive the semi-major axis from
-    the state vector and apply Kepler's third law.
+    """Return the osculating period of a planet about its central body.
 
     Args:
-        planet: A pykep planet.
-        epoch: When to evaluate the state; defaults to the window start.
+        planet (pykep.planet.spice): Planet to evaluate.
+        epoch (pykep.epoch, optional): Epoch of the state; ``None`` uses the
+            start of ``LAUNCH_WINDOW``. Defaults to None.
 
     Returns:
-        The period in seconds.
+        float: Period in seconds.
     """
     epoch = epoch if epoch is not None else LAUNCH_WINDOW[0]
     r, v = planet.eph(epoch)
@@ -207,17 +215,17 @@ def orbital_period(planet, epoch=None):
 
 
 def synodic_period(p1, p2, epoch=None):
-    """Days between successive p1 -> p2 launch opportunities.
+    """Return the days between successive launch opportunities from p1 to p2.
 
     Args:
-        p1: Departure pykep planet.
-        p2: Arrival pykep planet.
-        epoch: When to evaluate the orbits; defaults to the window start.
+        p1 (pykep.planet.spice): Departure planet.
+        p2 (pykep.planet.spice): Arrival planet.
+        epoch (pykep.epoch, optional): Epoch of the orbits; ``None`` uses the
+            start of ``LAUNCH_WINDOW``. Defaults to None.
 
     Returns:
-        The synodic period in days. For a resonant first leg (same body twice,
-        e.g. ``"EE..."``) it diverges -- any date works equally -- so anything
-        beyond ~8 years falls back to two years per slice.
+        float: Synodic period in days, or 730.5 when it exceeds 3000 days or
+        diverges, as for a repeated first body such as ``"EE..."``.
     """
     t1 = orbital_period(p1, epoch) / 86400.0
     t2 = orbital_period(p2, epoch) / 86400.0
@@ -226,23 +234,23 @@ def synodic_period(p1, p2, epoch=None):
 
 
 def launch_slices(sequence, window=None, width_days=None, overlap=0.2):
-    """Chop the launch window into overlapping slices, one per opportunity.
+    """Split a launch window into overlapping slices, one per launch opportunity.
 
-    First-leg launch opportunities recur at the synodic period of the first
-    two bodies, separated by stretches of very poor delta-v. Handing an
-    optimiser a multi-decade window makes it search across many nearly
-    disconnected basins at once; one search per slice turns that into many
-    easy problems. Slices overlap so a boundary optimum is not split and
-    missed by both neighbours.
+    Opportunities recur at the synodic period of the first two bodies. Slices
+    overlap so an optimum on a boundary lies inside at least one slice.
 
     Args:
-        sequence: Sequence string; its first two bodies set the slice width.
-        window: ``[epoch, epoch]`` to slice; defaults to ``LAUNCH_WINDOW``.
-        width_days: Explicit slice width; defaults to the synodic period.
-        overlap: Fractional overlap between adjacent slices.
+        sequence (str): Sequence string; its first two bodies set the default
+            slice width.
+        window (list[pykep.epoch], optional): ``[start, end]`` to split; ``None``
+            uses ``LAUNCH_WINDOW``. Defaults to None.
+        width_days (float, optional): Slice width in days; ``None`` uses the
+            synodic period. Defaults to None.
+        overlap (float, optional): Fraction of each slice shared with the next.
+            Defaults to 0.2.
 
     Returns:
-        A list of ``[epoch, epoch]`` slices covering the window.
+        list[list[pykep.epoch]]: ``[start, end]`` slices covering the window.
     """
     planets, _ = make_sequence(sequence)
     window = window if window is not None else LAUNCH_WINDOW
@@ -265,5 +273,5 @@ MJD2000_EPOCH = _dt.datetime(2000, 1, 1)
 
 
 def mjd2000_to_datetime(mjd2000):
-    """Calendar datetime for a pykep MJD2000 value."""
+    """Return the calendar datetime of a pykep MJD2000 epoch."""
     return MJD2000_EPOCH + _dt.timedelta(days=float(mjd2000))

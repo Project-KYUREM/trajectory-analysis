@@ -1,8 +1,7 @@
-"""Filesystem layout and the default search matrix.
+"""Define the filesystem layout and the default search matrix.
 
-Deliberately kernel-free: ``batch.py`` imports this without paying the SPICE /
-pykep import cost, and every other module reads the layout from here so the
-``results/<model>/<sequence>/`` convention is spelled in exactly one place.
+This module imports neither SPICE nor pykep, so ``batch.py`` uses it without
+loading kernels.
 """
 from pathlib import Path
 
@@ -17,7 +16,15 @@ DEFAULT_SEQUENCES = ("EVEEJN", "EVEJN", "EVJN", "EVVEJN", "EJN")
 
 
 def csv_list(text, upper=False):
-    """Split a comma-separated CLI value into a clean list."""
+    """Split a comma-separated CLI value into a list of items.
+
+    Args:
+        text (str): Comma-separated value.
+        upper (bool, optional): Upper-case every item. Defaults to False.
+
+    Returns:
+        list[str]: The stripped, non-empty items.
+    """
     items = [t.strip() for t in text.split(",") if t.strip()]
     return [t.upper() for t in items] if upper else items
 
@@ -27,12 +34,12 @@ RESULT_SCHEMA = 2
 
 
 def results_path(model, sequence, filename):
-    """Path of one raw result file (pure; writers create the directory)."""
+    """Return the path of one raw result file without creating its directory."""
     return RESULTS_DIR / model / sequence / filename
 
 
 def docs_run_dir(model, sequence):
-    """Directory of one run's site payload, created on demand (publish writes here)."""
+    """Return the directory of one run's site payload, creating it if needed."""
     directory = DOCS_DATA_DIR / model / sequence
     directory.mkdir(parents=True, exist_ok=True)
     return directory

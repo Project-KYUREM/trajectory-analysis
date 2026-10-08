@@ -1,16 +1,10 @@
-"""Multi-objective search: the cost / time-of-flight front for one model and sequence.
+"""Find the cost / time-of-flight Pareto front for one model and sequence.
 
-    python orbit_planning/pareto.py --model capture --sequence EVEEJN --sweep
-
-Single-objective optimisation returns one arbitrary point on the trade;
-NSGA-II returns the whole front, which is what the site's porkchop samples.
-Every individual from every island is kept, not just the front: the plot wants
-the cloud, and dominance is a flag, not a filter.
-
-Raw NSGA-II fronts run high (it spreads well but stalls short of each local
-optimum), so a TOF-spanning sub-sample of the front is MBH-polished afterwards
-and dominance is recomputed over the union. Run as a script, never from a
-notebook cell -- see ``optimize.py`` for why.
+Example: ``python orbit_planning/pareto.py --model capture --sequence EVEEJN
+--sweep``. NSGA-II individuals from every island are kept and the
+non-dominated ones are flagged. A TOF-spanning sub-sample of the front is then
+MBH-polished and dominance is recomputed over the whole cloud. Run it as a
+script, never from a notebook cell (see ``optimize.py``).
 """
 import argparse
 import json
@@ -25,12 +19,22 @@ import search
 
 
 def nsga2(gen):
-    """Non-dominated sorting genetic algorithm II."""
+    """Return pygmo's NSGA-II algorithm for ``gen`` generations."""
     return pg.algorithm(pg.nsga2(gen=gen))
 
 
 def _point(x, f, **tags):
-    """One cloud record from a decision vector and its ``(cost, tof)`` fitness."""
+    """Build one cloud record from a decision vector and its fitness.
+
+    Args:
+        x (Sequence[float]): Decision vector; ``x[0]`` is the launch epoch in
+            MJD2000.
+        f (Sequence[float]): Fitness ``(cost, tof_days)``.
+        **tags (Any): Extra fields set on the record.
+
+    Returns:
+        dict: The point record.
+    """
     record = dict(cost=float(f[0]), tof_days=float(f[1]),   # x[0]: launch epoch (models.py contract)
                   launch_mjd2000=float(x[0]), arrival_mjd2000=float(x[0] + f[1]),
                   pareto=False, polished=False, x=list(x))
@@ -39,7 +43,14 @@ def _point(x, f, **tags):
 
 
 def flag_front(points):
-    """Set ``pareto`` on the non-dominated points; returns how many there are."""
+    """Flag the non-dominated points of a cloud in place.
+
+    Args:
+        points (list[dict]): Cloud records; each gets its ``pareto`` field set.
+
+    Returns:
+        int: Number of points on the front.
+    """
     front = set(pg.non_dominated_front_2d([[p['cost'], p['tof_days']] for p in points]))
     for i, p in enumerate(points):
         p['pareto'] = i in front
@@ -47,19 +58,22 @@ def flag_front(points):
 
 
 def optimise_front(args, launch_window=None, log=print):
-    """NSGA-II archipelago over one launch window; returns the pooled cloud.
+    """Run an NSGA-II archipelago over one launch window and pool every island.
 
     Args:
-        args: Parsed CLI namespace (see ``search.add_search_args``).
-        launch_window: Optional ``[epoch, epoch]`` narrowing (slice sweep).
-        log: Print-like callable for progress lines.
+        args (argparse.Namespace): Parsed CLI arguments from
+            ``search.add_search_args``.
+        launch_window (list[pykep.epoch], optional): ``[start, end]`` launch
+            window; ``None`` uses the default window. Defaults to None.
+        log (Callable[[str], None], optional): Print-like callable for progress
+            lines. Defaults to print.
 
     Returns:
-        ``(points, wall_seconds)`` with every individual from every island.
+        tuple[list[dict], float]: ``(points, wall_seconds)``, with one record per
+        individual of every island.
 
     Raises:
-        ValueError: If the population size is not a multiple of four
-            (an NSGA-II requirement).
+        ValueError: If ``args.pop`` is not a multiple of four, as NSGA-II requires.
     """
     if args.pop % 4:
         raise ValueError(f"NSGA-II needs a population size divisible by 4, got {args.pop}")
@@ -75,19 +89,14 @@ def optimise_front(args, launch_window=None, log=print):
 
 
 def sweep(args):
-    """One NSGA-II run per launch slice, pooled into a single cloud.
-
-    A single search over the whole window concentrates on whichever launch
-    opportunities look cheapest and abandons the rest; per-slice runs
-    guarantee every opportunity is sampled, so the porkchop never shows an
-    empty band that only means "never searched".
+    """Run one NSGA-II search per launch slice and pool the results.
 
     Args:
-        args: Parsed CLI namespace.
+        args (argparse.Namespace): Parsed CLI arguments.
 
     Returns:
-        ``(points, wall_seconds)``: the pooled cloud (each point tagged with
-        its ``slice``) and the total elapsed time.
+        tuple[list[dict], float]: The pooled cloud, each point tagged with its
+        ``slice``, and the total wall time in seconds.
     """
     slices = mission.launch_slices(args.sequence, width_days=args.slice_width,
                                    overlap=args.overlap)
@@ -106,22 +115,20 @@ def sweep(args):
 
 
 def polish_front(points, args):
-    """MBH-polish a TOF-spanning sub-sample of the front and re-rank the cloud.
+    """MBH-polish a TOF-spanning sub-sample of the front and re-flag the cloud.
 
-    Each chosen point is pinned to a narrow band around its own launch date
-    (``x[0]``, the one gene every model shares) and time of flight (an
-    epsilon-constraint applied through the problem's TOF bounds) and locally
-    minimised. Polished
-    points are appended as new individuals and dominance is recomputed over
-    the union: refinement moves points by more than the margins between them,
-    so the old front cannot be assumed to survive.
+    Each chosen point is pinned to a narrow band around its own launch date and
+    time of flight, then locally minimised. Polished points are appended as new
+    records and dominance is recomputed over the whole cloud.
 
     Args:
-        points: The cloud; mutated in place (new points appended, flags reset).
-        args: Parsed CLI namespace with the ``--polish*`` knobs.
+        points (list[dict]): The cloud; polished points are appended and the
+            ``pareto`` flags recomputed in place.
+        args (argparse.Namespace): Parsed CLI arguments, including the
+            ``--polish*`` options.
 
     Returns:
-        A summary dict recorded into the result's settings.
+        dict: Polish summary recorded into the result's settings.
     """
     front = sorted((i for i, p in enumerate(points) if p['pareto']),
                    key=lambda i: points[i]['tof_days'])
@@ -166,7 +173,7 @@ def polish_front(points, args):
 
 
 def main():
-    """CLI: search (or sweep), flag the front, polish it, write the cloud."""
+    """Search or sweep, flag and polish the front, and write the cloud."""
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     search.add_search_args(parser, islands=8, pop=100, gen=200, rounds=10)

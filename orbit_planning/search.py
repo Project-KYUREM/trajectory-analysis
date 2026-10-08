@@ -1,8 +1,7 @@
-"""Search plumbing shared by ``optimize.py`` and ``pareto.py``.
+"""Provide the search plumbing shared by ``optimize.py`` and ``pareto.py``.
 
-Archipelago setup, the MBH + COBYLA polish, the parallel polish pool, the
-common CLI surface and the result-file provenance all live here so the two
-runners differ only in their algorithm and in what they collect.
+Holds the archipelago setup, the MBH + COBYLA polish and its process pool, the
+common CLI options and the result-file provenance.
 """
 import argparse
 import multiprocessing
@@ -19,28 +18,28 @@ import paths
 
 
 def silent(*_args, **_kwargs):
-    """A ``log`` callable that prints nothing."""
+    """Accept any arguments and print nothing, for use as a ``log`` callable."""
 
 
 def run_archipelago(prob, algo, islands, pop_size, rounds, seed=None, log=print):
     """Evolve a ring-topology archipelago and return it with its wall time.
 
-    Migration happens between evolution rounds, so ``rounds`` is also the
-    number of migration events; one big ``evolve()`` would never migrate.
-    pygmo's default topology is *unconnected* (no migration at all), which is
-    why the ring is passed explicitly.
+    Islands exchange migrants between evolution rounds, so ``rounds`` is also the
+    number of migration events.
 
     Args:
-        prob: A ``pg.problem`` (see ``models.problem``).
-        algo: A ``pg.algorithm``.
-        islands: Number of islands (each is a worker process).
-        pop_size: Individuals per island.
-        rounds: Evolution rounds; migration occurs between them.
-        seed: Optional archipelago seed (pygmo rejects ``None`` outright).
-        log: Print-like callable for progress lines.
+        prob (pygmo.problem): Problem to evolve (see ``models.problem``).
+        algo (pygmo.algorithm): Algorithm every island runs.
+        islands (int): Number of islands, each a worker process.
+        pop_size (int): Individuals per island.
+        rounds (int): Evolution rounds.
+        seed (int, optional): Archipelago seed. Defaults to None.
+        log (Callable[[str], None], optional): Print-like callable for progress
+            lines. Defaults to print.
 
     Returns:
-        ``(archipelago, wall_seconds)``.
+        tuple[pygmo.archipelago, float]: The evolved archipelago and its wall
+        time in seconds.
     """
     kwargs = dict(n=islands, algo=algo, prob=prob, pop_size=pop_size, t=pg.ring())
     if seed is not None:
@@ -57,28 +56,39 @@ def run_archipelago(prob, algo, islands, pop_size, rounds, seed=None, log=print)
 
 
 def best_champion(archi):
-    """``(cost, x, island_index)`` of the best island champion."""
+    """Return the best island champion of an archipelago.
+
+    Args:
+        archi (pygmo.archipelago): An evolved single-objective archipelago.
+
+    Returns:
+        tuple[float, list[float], int]: ``(cost, x, island_index)`` of the best
+        champion.
+    """
     fs, xs = archi.get_champions_f(), archi.get_champions_x()
     best = min(range(len(fs)), key=lambda i: fs[i][0])
     return float(fs[best][0]), list(xs[best]), best
 
 
 def polish(prob, x, maxeval=5000, stop=5, perturb=1e-3):
-    """Monotonic basin hopping around COBYLA from a starting vector.
+    """Refine a decision vector by monotonic basin hopping around COBYLA.
 
-    The pykep UDPs expose no gradient, so SLSQP is unusable; COBYLA is
-    derivative-free. MBH repeatedly perturbs and re-descends, which walks down
-    the funnel of nested local minima typical of gravity-assist landscapes.
+    COBYLA is derivative-free, which suits the pykep problems: they expose no
+    gradient.
 
     Args:
-        prob: Problem to minimise (single objective).
-        x: Starting decision vector, must lie inside ``prob``'s bounds.
-        maxeval: COBYLA evaluation cap per local descent.
-        stop: Consecutive non-improving hops before MBH stops.
-        perturb: Hop size as a fraction of each variable's range.
+        prob (pygmo.problem): Single-objective problem to minimise.
+        x (Sequence[float]): Starting decision vector, inside ``prob``'s bounds.
+        maxeval (int, optional): COBYLA evaluation cap per local descent.
+            Defaults to 5000.
+        stop (int, optional): Consecutive non-improving hops before MBH stops.
+            Defaults to 5.
+        perturb (float, optional): Hop size as a fraction of each variable's
+            range. Defaults to 1e-3.
 
     Returns:
-        ``(cost, x)`` of the best point found (never worse than the start).
+        tuple[float, list[float]]: ``(cost, x)`` of the best point found, never
+        worse than the start.
     """
     local = pg.nlopt('cobyla')
     local.maxeval = maxeval
@@ -89,15 +99,15 @@ def polish(prob, x, maxeval=5000, stop=5, perturb=1e-3):
 
 
 def polish_job(job):
-    """Worker body for ``parallel_polish``; runs in a spawned process.
+    """Polish one point inside a ``parallel_polish`` worker process.
 
     Args:
-        job: Dict with ``model``, ``sequence``, ``x``, ``window_mjd2000``
-            (``[lo, hi]`` launch bounds), optional ``tof_days`` (``[lo, hi]``,
-            the epsilon-constraint band), ``maxeval`` and ``stop``.
+        job (dict): ``model``, ``sequence``, ``x``, ``window_mjd2000`` (``[lo,
+            hi]`` launch bounds in MJD2000), optional ``tof_days`` (``[lo, hi]``
+            time-of-flight band), ``maxeval`` and ``stop``.
 
     Returns:
-        Dict with ``before``, ``after``, ``x`` and ``seconds``.
+        dict: ``before``, ``after``, ``x`` and ``seconds``.
     """
     lo, hi = job['window_mjd2000']
     prob = models.problem(job['model'], job['sequence'],
@@ -112,16 +122,16 @@ def polish_job(job):
 def parallel_polish(jobs, workers=None):
     """Run ``polish_job`` over many jobs in a spawn process pool.
 
-    Each polish is strictly serial, so independent points are refined one per
-    process. spawn re-imports ``__main__``, which is why every caller keeps its
-    entry point behind ``if __name__ == '__main__'``.
+    Spawned workers re-import ``__main__``, so every caller keeps its entry point
+    behind ``if __name__ == '__main__'``.
 
     Args:
-        jobs: Job dicts as ``polish_job`` expects.
-        workers: Pool size; defaults to the CPU count.
+        jobs (list[dict]): Job dicts as ``polish_job`` expects.
+        workers (int, optional): Pool size, capped at the number of jobs;
+            ``None`` uses the CPU count. Defaults to None.
 
     Returns:
-        One result dict per job, in order.
+        list[dict]: One result per job, in order.
     """
     if not jobs:
         return []
@@ -133,17 +143,14 @@ def parallel_polish(jobs, workers=None):
 
 # --------------------------------------------------------------------- CLI --
 def add_search_args(parser, islands, pop, gen, rounds):
-    """Attach the CLI surface both runners share.
-
-    Per-script defaults are passed in so the difference between the runners is
-    visible at their call sites rather than buried in two copies of this list.
+    """Add the CLI options both runners share to a parser.
 
     Args:
-        parser: The ``argparse.ArgumentParser`` to extend.
-        islands: Default island count (one worker process each).
-        pop: Default individuals per island.
-        gen: Default generations per island per round.
-        rounds: Default number of rounds (migration happens between rounds).
+        parser (argparse.ArgumentParser): Parser to extend.
+        islands (int): Default island count.
+        pop (int): Default individuals per island.
+        gen (int): Default generations per island per round.
+        rounds (int): Default number of evolution rounds.
     """
     parser.add_argument('--model', default='capture', choices=sorted(models.MODELS),
                         help='propulsion/objective model')
@@ -175,21 +182,32 @@ def add_search_args(parser, islands, pop, gen, rounds):
 
 
 def output_path(args, filename):
-    """Resolve ``--out`` or ``results/<model>/<sequence>/<filename>``, creating the directory."""
+    """Resolve the output file of a run and create its directory.
+
+    Args:
+        args (argparse.Namespace): Parsed CLI arguments with ``out``, ``model``
+            and ``sequence``.
+        filename (str): File name under ``results/<model>/<sequence>/``, used
+            when ``--out`` is not given.
+
+    Returns:
+        pathlib.Path: The output path.
+    """
     out = paths.Path(args.out) if args.out else paths.results_path(args.model, args.sequence.upper(), filename)
     out.parent.mkdir(parents=True, exist_ok=True)
     return out
 
 
 def result_header(args):
-    """Provenance every result file starts with.
+    """Build the provenance header every result file starts with.
 
     Args:
-        args: Parsed CLI namespace with ``model`` and ``sequence``.
+        args (argparse.Namespace): Parsed CLI arguments with ``model`` and
+            ``sequence``.
 
     Returns:
-        Dict with the schema version, model, sequence, labels, cost axis
-        metadata and the search bounds in force.
+        dict: Schema version, model, sequence, labels, cost-axis metadata and the
+        search bounds.
     """
     model = models.get(args.model)
     setup = mission.resolve_bounds(args.sequence)
@@ -206,17 +224,16 @@ def result_header(args):
 
 
 def run_settings(args, wall_seconds, **extra):
-    """The ``settings`` block of a result file.
+    """Build the ``settings`` block of a result file.
 
     Args:
-        args: Parsed CLI namespace.
-        wall_seconds: Total elapsed time of the run.
-        **extra: Anything run-specific to record alongside (e.g. polish stats).
+        args (argparse.Namespace): Parsed CLI arguments.
+        wall_seconds (float): Total elapsed time of the run.
+        **extra (Any): Run-specific entries to record, such as polish statistics.
 
     Returns:
-        Dict of search knobs, timing, the model's objective and the
-        destination's capture parameters (which belong to the body, not the
-        model, so they are recorded per run).
+        dict: Search options, timing, the model's objective and the destination's
+        capture parameters.
     """
     return {
         'islands': args.islands, 'pop': args.pop, 'gen': args.gen,

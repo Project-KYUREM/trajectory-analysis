@@ -1,14 +1,9 @@
-"""Static two-panel porkchop PNG from a raw ``pareto.json`` (the site draws the
-same figure interactively; this is the printable version).
+"""Render a static two-panel porkchop PNG from a raw ``pareto.json``.
 
-    python orbit_planning/porkchop.py --model capture --sequence EVEEJN --theme dark
-
-This is a *sampled* porkchop, not a contoured one. A classic porkchop contours
-delta-v over a departure x arrival grid because a ballistic two-body transfer
-is fully determined by those two dates; a multi-flyby trajectory has many more
-free parameters, so many costs share one date pair and no single-valued
-surface exists. What is plotted is the population the search actually found,
-with the non-dominated subset ringed.
+Example: ``python orbit_planning/porkchop.py --model capture --sequence EVEEJN
+--theme dark``. Each marker is one trajectory the search found, ringed when
+non-dominated. A multi-flyby trajectory has more free parameters than its two
+dates, so many costs share one launch/arrival pair.
 """
 import argparse
 import json
@@ -44,7 +39,7 @@ THEMES = {
 
 
 def _style(theme):
-    """Apply a theme to matplotlib's rcParams and return its palette."""
+    """Apply a ``THEMES`` entry to matplotlib's rcParams and return its palette."""
     t = THEMES[theme]
     matplotlib.rcParams.update({
         'figure.facecolor': t['surface'], 'axes.facecolor': t['surface'],
@@ -56,16 +51,18 @@ def _style(theme):
 
 
 def plot(data, theme='light', clip_pct=85.0):
-    """Render the porkchop + cost/time trade figure for one raw result.
+    """Render the porkchop and cost/time-of-flight trade figure for one raw result.
 
     Args:
-        data: A loaded ``pareto.json`` (``points``, ``labels``, ``cost_label`` ...).
-        theme: ``'light'`` or ``'dark'``.
-        clip_pct: Percentile at which the colour scale is clipped; the tail of
-            a population runs to absurd costs and would flatten the ramp.
+        data (dict): A loaded ``pareto.json``.
+        theme (str, optional): ``'light'`` or ``'dark'``. Defaults to 'light'.
+        clip_pct (float, optional): Percentile at which the colour scale is
+            clipped, so the high-cost tail does not flatten the ramp.
+            Defaults to 85.0.
 
     Returns:
-        ``(figure, info)`` where ``info`` reports the clip level applied.
+        tuple[matplotlib.figure.Figure, dict]: The figure and
+        ``{'n_over', 'vmax', 'vmin'}`` describing the colour scale.
     """
     t, cmap = _style(theme), CMAPS[theme]
     pts = data['points']
@@ -134,14 +131,15 @@ def plot(data, theme='light', clip_pct=85.0):
 
 
 def front_table(data, rows=10):
-    """Text view of the front, sampled -- the chart's accessible counterpart.
+    """Format a sampled text table of the front.
 
     Args:
-        data: A loaded ``pareto.json``.
-        rows: Approximate number of rows to print, spread across the front.
+        data (dict): A loaded ``pareto.json``.
+        rows (int, optional): Approximate number of rows, spread across the
+            front. Defaults to 10.
 
     Returns:
-        A formatted multi-line string.
+        str: Multi-line table of time of flight, cost, launch and arrival dates.
     """
     front = sorted((p for p in data['points'] if p['pareto']), key=lambda p: p['tof_days'])
     step = max(1, len(front) // rows)
@@ -154,7 +152,7 @@ def front_table(data, rows=10):
 
 
 def main():
-    """CLI: render one run's porkchop PNG and print its front table."""
+    """Render one run's porkchop PNG and print its front table."""
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--model', default=paths.DEFAULT_MODELS[0])
