@@ -150,7 +150,7 @@ function showDetail(id) {
       <td class="num">${leg.dsm_ms != null ? leg.dsm_ms.toFixed(0) + ' m/s' : '—'}</td>
       <td>${isoDay(leg.arr_date)}</td></tr>`).join('');
   const captureRow = lt
-    ? `<tr><th>${arrival.body} low-thrust capture spiral to ${arrival.orbit_radius_km.toFixed(0)} km circular</th>
+    ? `<tr><th>${arrival.body} low-thrust capture spiral to ${arrival.orbit_periapsis_km.toFixed(0)} × ${arrival.orbit_apoapsis_km.toFixed(0)} km orbit</th>
          <td class="num" colspan="3">${arrival.capture_dv_ms.toFixed(0)} m/s over ${arrival.capture_spiral_days.toFixed(0)} d</td></tr>`
     : arrival.capture_dv_ms != null
     ? `<tr><th>${arrival.body} capture burn</th><td class="num" colspan="3">${arrival.capture_dv_ms.toFixed(0)} m/s</td></tr>` : '';

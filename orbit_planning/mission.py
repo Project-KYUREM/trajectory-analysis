@@ -76,8 +76,13 @@ def gm(body):
 #   capture = the loose insertion ellipse the `capture` model prices;
 #   entry_altitude_m = height of the atmospheric entry interface above the
 #   1-bar radius, used for the reported entry speed.
-# lowthrust_orbit: the circular orbit the low-thrust (DFD) models spiral into,
-#   in planet radii; see models.DFD_SPACECRAFT and lowthrust.capture_cost.
+# lowthrust_orbit: the orbit the low-thrust (DFD) models spiral into: periapsis
+#   in planet radii, apoapsis in km; see models.DFD_SPACECRAFT and
+#   lowthrust.capture_sim.
+# Triton's semi-major axis about Neptune, km (JPL satellite mean elements;
+# Jacobson 2009).
+TRITON_SMA_KM = 354759.0
+
 BODIES = {
     'V': dict(label='Venus', ephem='VENUS', gm_of='VENUS',
               radius=6051800.0, safe_ratio=1.1),
@@ -96,9 +101,10 @@ BODIES = {
               # loose first-capture ellipse (cheap to enter, walked down later);
               # 1000 km is the usual giant-planet entry-interface altitude
               capture=dict(rp_ratio=1.1, e=0.99), entry_altitude_m=1000e3,
-              # 10 R_N ~ 246 000 km: outside the rings and Proteus (4.8 R_N),
-              # inside Triton (14.3 R_N), deep inside the Hill sphere
-              lowthrust_orbit=dict(radius_radii=10.0)),
+              # periapsis 1.25 R_N (30 778 km), apoapsis 1.25 x Triton's orbit
+              # (443 449 km): e = 0.87, period ~3.2 days, apoapsis ~0.4 % of
+              # the Hill radius
+              lowthrust_orbit=dict(periapsis_radii=1.25, apoapsis_km=1.25 * TRITON_SMA_KM)),
 }
 
 _planet_cache = {}

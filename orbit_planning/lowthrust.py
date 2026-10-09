@@ -24,13 +24,18 @@ Physics, in order of the mission:
   radius and plane angle that are genes, so no flyby constraint is needed.
   Thrusting happens on the legs on both sides of the flyby.
 * **Capture.** The final leg ends at the destination with a v-infinity that is
-  a gene. A low-thrust spiral from that hyperbola into a circular orbit of
-  radius ``r`` costs, in the Edelbaum / thrust-much-less-than-gravity limit,
-  ``dv = v_inf + sqrt(mu / r)``: the v-infinity is shed far out where gravity
-  is weak, then the spiral from a parabolic orbit to a circular one costs the
-  circular speed. The spiral takes ``dm * c / thrust`` seconds, which is added
-  to the time objective. This is an upper bound on the capture cost (it ignores
-  any Oberth gain from braking deep in the well).
+  a gene. The planetocentric phase, from that hyperbola into a highly
+  eccentric target orbit (default periapsis 1.25 R_N, apoapsis 1.25 x
+  Triton's orbit), is flown numerically by ``capture_sim``: planar two-body
+  dynamics with the engine steered by a Q-law (Petropoulos 2004), a Lyapunov
+  feedback that drives orbital energy and periapsis radius to their targets
+  together. It thrusts continuously until the orbit is bound and its apoapsis
+  is below ``capture_kswitch`` times the target's, then coasts wherever
+  thrusting is less than ``capture_eta`` as effective as at the best point of
+  the current orbit. Its delta-v and duration are tabulated once over
+  arrival v-infinity and arrival mass (``CaptureTable``, cached on disk) and
+  interpolated in every fitness call; the duration is added to the time
+  objective.
 
 Decision vector (all MJD2000 / days / km/s / fractions; see ``Layout``)::
 
@@ -85,14 +90,16 @@ class Engine:
 
 
 # Direct Fusion Drive (Princeton Satellite Systems / PPPL, PFRC-based). These
-# are published design estimates, not flight data: ~10 000 s Isp and 5-10 N
-# per MW of fusion power (Thomas et al. 2017; Cohen et al. 2019; Gajeri et al.
-# 2020, arXiv:2009.12621). The 1 MW point matches the PSS 10 t Pluto orbiter
-# study (5 N); the 2 MW point scales it to the 20 t spacecraft here. Replace
-# with your own engine's numbers: nothing else in the pipeline is tuned to them.
+# are published design estimates, not flight data: Isp ~10 000 s; 2.5-5 N per
+# MW of fusion power in the NIAC Phase I modelling (Thomas, Paluszek & Cohen
+# 2017), 5-10 N per MW as quoted by Gajeri, Aime & Kezerashvili (2020,
+# arXiv:2009.12621). The 1 MW / 5 N point is the PSS Pluto orbiter study's
+# engine (~1000 kg to Pluto orbit in ~4 yr); the 2 MW / 10 N point is sized
+# for the 20 t spacecraft here. Sources are listed in the README. Replace with
+# your own engine's numbers: nothing else in the pipeline is tuned to them.
 ENGINES = {e.name: e for e in (
     Engine('dfd-1mw', thrust_n=5.0, isp_s=10000.0, power_mw=1.0,
-           note='PSS DFD, 1 MW, 5 N @ 10 000 s (Pluto orbiter study scale)'),
+           note='PSS DFD, 1 MW, 5 N @ 10 000 s (PSS Pluto orbiter study engine)'),
     Engine('dfd-2mw', thrust_n=10.0, isp_s=10000.0, power_mw=2.0,
            note='PSS DFD, 2 MW (two 1 MW units or one 2 MW unit), 10 N @ 10 000 s'),
 )}
@@ -119,12 +126,26 @@ class Spacecraft:
         flyby_vinf_max_kms (float, optional): Upper bound of every flyby
             v-infinity gene. Defaults to 20 km/s.
         arrival_vinf_max_kms (float, optional): Upper bound of the arrival
-            v-infinity gene. Defaults to 10 km/s.
-        orbit_radius_radii (float, optional): Radius of the circular target orbit
-            at the destination, in planet radii. The default of 10 Neptune radii
-            (~246 000 km) sits between Proteus (4.8 R_N) and Triton (14.3 R_N),
-            outside the rings (< 2.6 R_N) and deep inside the Hill sphere
-            (~4 700 R_N). Defaults to 10.
+            v-infinity gene and of the capture table (which may cap lower, at
+            its last converged row; an inequality constraint enforces that).
+            Low-thrust capture cost grows faster than v-infinity (shedding it
+            in the heliocentric phase is cheaper), so trajectories arrive
+            slow. Defaults to 4 km/s.
+        periapsis_radii (float, optional): Periapsis of the target orbit, in
+            radii of the destination. Defaults to 1.25.
+        apoapsis_km (float, optional): Apoapsis of the target orbit, km.
+            Defaults to 443 449 km, 1.25 x Triton's semi-major axis
+            (354 759 km): the orbit crosses Triton's and stays deep inside
+            Neptune's Hill sphere (~116 million km).
+        capture_eta (float, optional): Q-law effectivity cut: once the orbit is
+            small, coast wherever thrusting is less than this fraction as
+            effective as at the best point of the orbit. 0 thrusts all the way
+            (fastest, ~2x the delta-v); larger saves propellant and takes
+            longer. Defaults to 0.2.
+        capture_kswitch (float, optional): Coasting is allowed only once the
+            orbit is bound with apoapsis below this multiple of the target's;
+            before that the engine thrusts continuously so the first periapsis
+            pass captures. Defaults to 5.
         high_fidelity (bool, optional): Propagate each segment with continuous
             thrust (pykep's Taylor integrator) instead of one impulse at its
             midpoint. Much slower. Defaults to False.
@@ -135,8 +156,11 @@ class Spacecraft:
     launch_c3_km2s2: float = 0.0
     n_seg: int = 10
     flyby_vinf_max_kms: float = 20.0
-    arrival_vinf_max_kms: float = 10.0
-    orbit_radius_radii: float = 10.0
+    arrival_vinf_max_kms: float = 4.0
+    periapsis_radii: float = 1.25
+    apoapsis_km: float = 1.25 * 354759.0
+    capture_eta: float = 0.2
+    capture_kswitch: float = 5.0
     high_fidelity: bool = False
 
     def record(self):
@@ -148,31 +172,302 @@ class Spacecraft:
                     launch_c3_km2s2=self.launch_c3_km2s2, n_seg=self.n_seg,
                     flyby_vinf_max_kms=self.flyby_vinf_max_kms,
                     arrival_vinf_max_kms=self.arrival_vinf_max_kms,
-                    orbit_radius_radii=self.orbit_radius_radii,
+                    periapsis_radii=self.periapsis_radii, apoapsis_km=self.apoapsis_km,
+                    capture_eta=self.capture_eta, capture_kswitch=self.capture_kswitch,
+                    capture_model='planar Q-law spiral (lowthrust.capture_sim)',
                     high_fidelity=self.high_fidelity)
 
 
-def capture_cost(vinf_ms, mass_kg, mu, radius_m, engine):
-    """Price a low-thrust capture from a hyperbola into a circular orbit.
+# ------------------------------------------------------------------ capture --
+def _q_terms(x, y, vx, vy, mu, e_target, rp_target):
+    """Return the capture Q-law's Lyapunov value and its velocity gradient.
 
-    Args:
-        vinf_ms (float): Arrival hyperbolic excess speed, m/s.
-        mass_kg (float): Mass on arrival, kg.
-        mu (float): Gravitational parameter of the destination, m^3/s^2.
-        radius_m (float): Radius of the circular target orbit, m.
-        engine (Engine): The engine doing the spiral.
+    ``Q = dE^2 + dp^2`` with ``dE`` the energy error relative to the target
+    energy and ``dp`` the periapsis-radius error relative to the target
+    periapsis. Energy and periapsis (rather than apoapsis) stay defined on a
+    hyperbola, so one law runs from arrival to the final orbit.
 
     Returns:
-        dict: ``dv_ms``, ``final_mass_kg``, ``propellant_kg``, ``days``
-        (spiral duration at full thrust) and ``v_circ_ms``.
+        tuple: ``(Q, (dQ/dvx, dQ/dvy), rp, E, h, e)``.
     """
-    v_circ = math.sqrt(mu / radius_m)
-    dv = vinf_ms + v_circ
-    final = mass_kg * math.exp(-dv / engine.exhaust_ms)
-    prop = mass_kg - final
-    return dict(dv_ms=dv, final_mass_kg=final, propellant_kg=prop,
-                days=prop * engine.exhaust_ms / engine.thrust_n / pk.DAY2SEC,
-                v_circ_ms=v_circ)
+    r = math.hypot(x, y)
+    E = 0.5 * (vx * vx + vy * vy) - mu / r
+    h = x * vy - y * vx
+    e = math.sqrt(max(1.0 + 2.0 * E * h * h / (mu * mu), 1e-16))
+    rp = h * h / (mu * (1.0 + e))
+    ge = ((h * h * vx - 2.0 * E * h * y) / (mu * mu * e),
+          (h * h * vy + 2.0 * E * h * x) / (mu * mu * e))
+    grp = ((-2.0 * h * y * (1.0 + e) - h * h * ge[0]) / (mu * (1.0 + e) ** 2),
+           (2.0 * h * x * (1.0 + e) - h * h * ge[1]) / (mu * (1.0 + e) ** 2))
+    dE = (E - e_target) / abs(e_target)
+    dp = (rp - rp_target) / rp_target
+    grad = (2.0 * dE * vx / abs(e_target) + 2.0 * dp * grp[0] / rp_target,
+            2.0 * dE * vy / abs(e_target) + 2.0 * dp * grp[1] / rp_target)
+    return dE * dE + dp * dp, grad, rp, E, h, e
+
+
+_NU = np.linspace(-math.pi, math.pi, 49)[:-1]
+
+
+def _best_rate(h, e, E, rp, mu, e_target, rp_target):
+    """Return the largest ``|grad_v Q|`` on the osculating orbit (its bound arc for a hyperbola)."""
+    p = h * h / mu
+    nu = _NU if e < 1.0 else _NU[np.abs(_NU) < math.acos(-1.0 / e) - 0.05]
+    cn, sn = np.cos(nu), np.sin(nu)
+    r = p / (1.0 + e * cn)
+    x, y = r * cn, r * sn
+    vx, vy = -mu / h * sn, mu / h * (e + cn)
+    ge = ((h * h * vx - 2.0 * E * h * y) / (mu * mu * e),
+          (h * h * vy + 2.0 * E * h * x) / (mu * mu * e))
+    grp = ((-2.0 * h * y * (1.0 + e) - h * h * ge[0]) / (mu * (1.0 + e) ** 2),
+           (2.0 * h * x * (1.0 + e) - h * h * ge[1]) / (mu * (1.0 + e) ** 2))
+    dE = (E - e_target) / abs(e_target)
+    dp = (rp - rp_target) / rp_target
+    gx = 2.0 * dE * vx / abs(e_target) + 2.0 * dp * grp[0] / rp_target
+    gy = 2.0 * dE * vy / abs(e_target) + 2.0 * dp * grp[1] / rp_target
+    return float(np.max(np.hypot(gx, gy)))
+
+
+class _Budget(Exception):
+    """Raised inside the integrator when a capture exceeds its evaluation budget."""
+
+
+def capture_sim(vinf_ms, mass_kg, thrust_n, exhaust_ms, mu, body_radius_m, rp_m, ra_m,
+                eta=0.2, kswitch=5.0, start_radius_m=None, q_tol=1e-5, ramp=0.05,
+                max_days=1500.0, max_evals=600000):
+    """Fly a low-thrust capture from a hyperbola into an elliptical orbit.
+
+    Planar two-body motion about the destination, starting inbound on the
+    arrival hyperbola (aimed at periapsis ``rp_m``) at ``start_radius_m``.
+    The thrust points along ``-grad_v Q`` (``_q_terms``) at full magnitude.
+    Once the orbit is bound with apoapsis below ``kswitch * ra_m`` it is
+    throttled smoothly to zero where its effectivity (``|grad_v Q|`` here over
+    its maximum on the osculating orbit) is below ``eta``; before that, and
+    always when ``eta`` is 0, it only fades out where ``|grad_v Q|`` is under
+    ``ramp`` of its periapsis value, the points near apoapsis where the energy
+    and periapsis terms cancel and the steering direction flips. The run ends when ``Q`` falls
+    below ``q_tol`` (energy and periapsis within ~0.3 %).
+
+    Args:
+        vinf_ms (float): Arrival v-infinity, m/s.
+        mass_kg (float): Mass at arrival, kg.
+        thrust_n (float): Thrust, N.
+        exhaust_ms (float): Exhaust speed, m/s.
+        mu (float): Destination GM, m^3/s^2.
+        body_radius_m (float): Destination radius; reaching 1.02 of it ends the
+            run as a crash.
+        rp_m (float): Target periapsis radius, m.
+        ra_m (float): Target apoapsis radius, m.
+        eta (float, optional): Effectivity cut; 0 never coasts. Defaults to 0.2.
+        kswitch (float, optional): Apoapsis multiple below which coasting is
+            allowed. Defaults to 5.
+        start_radius_m (float, optional): Radius where the capture starts;
+            ``None`` uses ``5 * ra_m``. Defaults to None.
+        q_tol (float, optional): Convergence threshold on ``Q``. Defaults to 1e-5.
+        ramp (float, optional): Width of the throttle ramp in effectivity.
+            Defaults to 0.05.
+        max_days (float, optional): Time limit. Defaults to 1500 days.
+        max_evals (int, optional): Right-hand-side evaluation limit. Defaults to
+            600 000.
+
+    Returns:
+        dict: ``status`` (``ok``, ``crash``, ``timeout`` or ``budget``),
+        ``dv_ms``, ``days``, ``final_mass_kg``, ``rp_m``, ``ra_m``.
+    """
+    from scipy.integrate import solve_ivp   # only the table build needs scipy
+
+    e_target = -mu / (rp_m + ra_m)
+    r0 = start_radius_m or 5.0 * ra_m
+    h0 = rp_m * math.sqrt(vinf_ms ** 2 + 2.0 * mu / rp_m)
+    v0 = math.sqrt(vinf_ms ** 2 + 2.0 * mu / r0)
+    vt = h0 / r0
+    state0 = [r0, 0.0, -math.sqrt(max(v0 * v0 - vt * vt, 0.0)), vt, mass_kg]
+    e_switch = -mu / (rp_m + kswitch * ra_m)
+    evals = [0]
+
+    def rhs(_t, s):
+        evals[0] += 1
+        if evals[0] > max_evals:
+            raise _Budget
+        _q, g, rp, E, h, e = _q_terms(s[0], s[1], s[2], s[3], mu, e_target, rp_m)
+        n = math.hypot(*g)
+        if eta > 0.0 and E < e_switch:
+            ref, cut = _best_rate(h, e, E, rp, mu, e_target, rp_m), eta
+        else:
+            # Thrust everywhere, but fade out where the energy and periapsis
+            # terms of the gradient cancel (near apoapsis): there the
+            # steering direction flips and the integrator would stall.
+            ref, cut = math.hypot(*_q_terms(rp, 0.0, 0.0, h / rp, mu, e_target, rp_m)[1]), 0.0
+        ref = max(ref, n, 1e-300)
+        throttle = min(max((n / ref - cut) / ramp, 0.0), 1.0)
+        r = math.hypot(s[0], s[1])
+        grav = -mu / r ** 3
+        acc = throttle * thrust_n / s[4] / n if n > 0.0 else 0.0
+        return [s[2], s[3], grav * s[0] - acc * g[0], grav * s[1] - acc * g[1],
+                -throttle * thrust_n / exhaust_ms]
+
+    def done(_t, s):
+        return _q_terms(s[0], s[1], s[2], s[3], mu, e_target, rp_m)[0] - q_tol
+    done.terminal, done.direction = True, -1
+
+    def crash(_t, s):
+        return math.hypot(s[0], s[1]) - 1.02 * body_radius_m
+    crash.terminal = True
+
+    try:
+        sol = solve_ivp(rhs, [0.0, max_days * 86400.0], state0, method='DOP853', rtol=1e-9,
+                        atol=[1.0, 1.0, 1e-6, 1e-6, 1e-6], events=[done, crash])
+    except _Budget:
+        return dict(status='budget', dv_ms=float('nan'), days=float('nan'),
+                    final_mass_kg=float('nan'), rp_m=float('nan'), ra_m=float('nan'))
+    status = ('ok' if sol.t_events[0].size else 'crash' if sol.t_events[1].size else 'timeout')
+    _q, _g, rp, E, h, e = _q_terms(*sol.y[:4, -1], mu, e_target, rp_m)
+    m_end = float(sol.y[4, -1])
+    return dict(status=status, dv_ms=exhaust_ms * math.log(mass_kg / m_end),
+                days=float(sol.t[-1]) / 86400.0, final_mass_kg=m_end, rp_m=rp,
+                ra_m=(-mu / E - rp) if E < 0 else float('inf'))
+
+
+def _capture_cell(job):
+    """Fill one ``CaptureTable`` cell: the efficient law first, continuous thrust as fallback."""
+    for eta in dict.fromkeys((job['eta'], 0.0)):
+        result = capture_sim(job['vinf_ms'], job['mass_kg'], eta=eta, **job['common'])
+        if result['status'] == 'ok':
+            return dict(result, eta=eta)
+    return dict(result, eta=None)
+
+
+class CaptureTable:
+    """Capture delta-v and duration over arrival v-infinity and arrival mass.
+
+    Only fully converged v-infinity rows are kept (``capture_table`` trims the
+    rest), and ``vinf_kms[-1]`` is the largest arrival v-infinity the problem
+    accepts (an inequality constraint of ``MgaLowThrust``). Lookups use a
+    bicubic spline, so the objective and the final-mass constraint stay smooth
+    for the gradient-based polish.
+
+    Args:
+        vinf_kms (numpy.ndarray): v-infinity grid, km/s.
+        mass_kg (numpy.ndarray): Arrival-mass grid, kg.
+        dv_ms (numpy.ndarray): Delta-v, m/s, shape ``(len(vinf), len(mass))``.
+        days (numpy.ndarray): Duration, days, same shape.
+        eta_used (numpy.ndarray): Effectivity cut that converged per cell.
+        key (str): Hash of every input; the cache file name.
+    """
+
+    def __init__(self, vinf_kms, mass_kg, dv_ms, days, eta_used, key):
+        """Store the grids; the splines are built on first lookup."""
+        self.vinf_kms, self.mass_kg = np.asarray(vinf_kms), np.asarray(mass_kg)
+        self.dv_ms, self.days = np.asarray(dv_ms), np.asarray(days)
+        self.eta_used, self.key = np.asarray(eta_used), key
+        self._splines = None
+
+    def __getstate__(self):
+        """Drop the splines before pickling; they are rebuilt where used."""
+        state = self.__dict__.copy()
+        state['_splines'] = None
+        return state
+
+    @property
+    def vinf_max_ms(self):
+        """Largest arrival v-infinity the table covers, m/s."""
+        return float(self.vinf_kms[-1]) * 1000.0
+
+    def lookup(self, vinf_ms, mass_kg):
+        """Return ``(dv_ms, days)`` at one point, clamped to the grid."""
+        if self._splines is None:
+            from scipy.interpolate import RectBivariateSpline
+            kx, ky = min(3, len(self.vinf_kms) - 1), min(3, len(self.mass_kg) - 1)
+            self._splines = [RectBivariateSpline(self.vinf_kms, self.mass_kg, grid, kx=kx, ky=ky)
+                             for grid in (self.dv_ms, self.days)]
+        v = min(max(vinf_ms / 1000.0, self.vinf_kms[0]), self.vinf_kms[-1])
+        m = min(max(mass_kg, self.mass_kg[0]), self.mass_kg[-1])
+        return tuple(float(sp(v, m)[0, 0]) for sp in self._splines)
+
+
+# Capture-table grid: v-infinity in km/s (topped up to the arrival bound) and
+# the number of arrival-mass points between the mass floor and the wet mass.
+CAPTURE_VINF_KMS = (0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0)
+CAPTURE_MASS_POINTS = 4
+_TABLES = {}
+
+
+def capture_table(sc, mu, body_radius_m, cache_dir=None, workers=None, log=print):
+    """Return the capture table of a spacecraft at a destination, building it once.
+
+    The table is memoised per process and cached as ``capture_<key>.npz`` in
+    ``cache_dir``, where ``key`` hashes every input, so a change to the engine,
+    target orbit, Q-law settings or grid rebuilds it. Building runs one
+    ``capture_sim`` per cell in a spawn process pool (seconds to a minute each).
+
+    Args:
+        sc (Spacecraft): Spacecraft, engine and target orbit.
+        mu (float): Destination GM, m^3/s^2.
+        body_radius_m (float): Destination radius, m.
+        cache_dir (pathlib.Path, optional): Cache directory; ``None`` keeps the
+            table in memory only. Defaults to None.
+        workers (int, optional): Pool size; ``None`` uses the CPU count.
+            Defaults to None.
+        log (Callable[[str], None], optional): Progress printer. Defaults to print.
+
+    Returns:
+        CaptureTable: The table.
+    """
+    import hashlib
+    import json
+    import multiprocessing
+    import os
+    from concurrent.futures import ProcessPoolExecutor
+
+    vinf = sorted({v for v in CAPTURE_VINF_KMS if v < sc.arrival_vinf_max_kms}
+                  | {sc.arrival_vinf_max_kms})
+    mass = list(np.linspace(sc.min_final_mass_kg, sc.wet_mass_kg, CAPTURE_MASS_POINTS))
+    common = dict(thrust_n=sc.engine.thrust_n, exhaust_ms=sc.engine.exhaust_ms, mu=mu,
+                  body_radius_m=body_radius_m, rp_m=sc.periapsis_radii * body_radius_m,
+                  ra_m=sc.apoapsis_km * 1e3, kswitch=sc.capture_kswitch)
+    key = hashlib.sha1(json.dumps(dict(common, eta=sc.capture_eta, vinf=vinf, mass=mass,
+                                       version=3), sort_keys=True).encode()).hexdigest()[:16]
+    if key in _TABLES:
+        return _TABLES[key]
+    path = cache_dir / f'capture_{key}.npz' if cache_dir is not None else None
+    if path is not None and path.is_file():
+        z = np.load(path)
+        table = CaptureTable(z['vinf_kms'], z['mass_kg'], z['dv_ms'], z['days'], z['eta_used'], key)
+        _TABLES[key] = table
+        return table
+
+    jobs = [dict(vinf_ms=v * 1000.0, mass_kg=m, eta=sc.capture_eta, common=common)
+            for v in vinf for m in mass]
+    log(f"building the {sc.engine.name} capture table ({len(vinf)} v-inf x {len(mass)} masses, "
+        f"rp {sc.periapsis_radii:g} R, ra {sc.apoapsis_km:.0f} km); cached once built")
+    ctx = multiprocessing.get_context('spawn')
+    with ProcessPoolExecutor(max_workers=min(workers or os.cpu_count() or 1, len(jobs)),
+                             mp_context=ctx) as pool:
+        cells = list(pool.map(_capture_cell, jobs))
+    shape = (len(vinf), len(mass))
+    ok = np.array([c['eta'] is not None for c in cells]).reshape(shape)
+    dv = np.array([c['dv_ms'] for c in cells]).reshape(shape)
+    days = np.array([c['days'] for c in cells]).reshape(shape)
+    eta_used = np.array([-1.0 if c['eta'] is None else c['eta'] for c in cells]).reshape(shape)
+    for i, v in enumerate(vinf):
+        log(f"  v-inf {v:4.1f} km/s: " + "  ".join(
+            f"{dv[i, j]:6.0f} m/s {days[i, j]:5.0f} d" if ok[i, j] else "  FAILED      "
+            for j in range(len(mass))))
+    # keep the converged prefix of rows; arrivals faster than that are refused
+    rows = next((i for i in range(len(vinf)) if not ok[i].all()), len(vinf))
+    if rows < 2:
+        raise RuntimeError("capture table: no two v-infinity rows converged; "
+                           "check the engine and target orbit")
+    if rows < len(vinf):
+        log(f"  arrival v-inf capped at {vinf[rows - 1]:g} km/s (first unconverged row)")
+    table = CaptureTable(np.array(vinf[:rows]), np.array(mass), dv[:rows], days[:rows],
+                         eta_used[:rows], key)
+    if path is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(path, vinf_kms=table.vinf_kms, mass_kg=table.mass_kg, dv_ms=table.dv_ms,
+                 days=table.days, eta_used=table.eta_used)
+    _TABLES[key] = table
+    return table
 
 
 def _vinf_vector(mag_kms, u, v):
@@ -248,9 +543,11 @@ class MgaLowThrust:
             capture spiral comes on top).
         multi_objective (bool, optional): Return ``(propellant, total_days)``
             instead of propellant alone. Defaults to False.
+        table (CaptureTable, optional): Capture costs; ``None`` builds (or loads)
+            it with ``capture_table`` and no disk cache. Defaults to None.
     """
 
-    def __init__(self, planets, sc, t0, tof_days, multi_objective=False):
+    def __init__(self, planets, sc, t0, tof_days, multi_objective=False, table=None):
         """Store the problem data and build the reusable Sims-Flanagan leg."""
         self.planets = list(planets)
         self.sc = sc
@@ -259,6 +556,8 @@ class MgaLowThrust:
         self.multi_objective = multi_objective
         self.n_legs = len(self.planets) - 1
         self.layout = Layout(self.n_legs, sc.n_seg, sc.launch_c3_km2s2 > 0.0)
+        dest = self.planets[-1]
+        self.table = table if table is not None else capture_table(sc, dest.mu_self, dest.radius)
         self._leg = None
 
     # pykep's leg is not picklable; pygmo pickles UDPs into spawned workers, so
@@ -312,8 +611,8 @@ class MgaLowThrust:
         return 7 * self.n_legs
 
     def get_nic(self):
-        """Return the number of inequality constraints: throttle norms plus the mass floor."""
-        return self.n_legs * self.sc.n_seg + 1
+        """Return the number of inequality constraints: throttle norms, mass floor, arrival speed."""
+        return self.n_legs * self.sc.n_seg + 2
 
     def get_name(self):
         """Return a readable problem name."""
@@ -375,12 +674,19 @@ class MgaLowThrust:
                     flybys=flybys)
 
     def capture(self, x, boundary=None):
-        """Return the capture cost (see ``capture_cost``) of a decision vector."""
+        """Return the low-thrust capture of a decision vector, from the capture table.
+
+        Returns:
+            dict: ``dv_ms``, ``days``, ``final_mass_kg``, ``propellant_kg``,
+            ``vinf_ms`` and ``arrival_mass_kg``.
+        """
         b = boundary if boundary is not None else self.boundary_states(x)
-        dest = self.planets[-1]
-        return capture_cost(float(np.linalg.norm(b['vinf_arr'])), b['end'][-1][2],
-                            dest.mu_self, self.sc.orbit_radius_radii * dest.radius,
-                            self.sc.engine)
+        vinf = float(np.linalg.norm(b['vinf_arr']))
+        mass = float(b['end'][-1][2])
+        dv, days = self.table.lookup(vinf, mass)
+        final = mass * math.exp(-dv / self.sc.engine.exhaust_ms)
+        return dict(dv_ms=dv, days=days, final_mass_kg=final, propellant_kg=mass - final,
+                    vinf_ms=vinf, arrival_mass_kg=mass)
 
     def _evaluate(self, x):
         """Run every leg and the capture; return objectives and constraints."""
@@ -402,6 +708,8 @@ class MgaLowThrust:
             ineq += list(leg.throttles_constraints())
         cap = self.capture(x, b)
         ineq.append((sc.min_final_mass_kg - cap['final_mass_kg']) / sc.wet_mass_kg)
+        # arrivals faster than the capture table covers (km/s)
+        ineq.append((cap['vinf_ms'] - self.table.vinf_max_ms) / 1000.0)
         return dict(propellant_kg=sc.wet_mass_kg - cap['final_mass_kg'],
                     total_days=float(x[L.T]) + cap['days'], eq=eq, ineq=ineq)
 

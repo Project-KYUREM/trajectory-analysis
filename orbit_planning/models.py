@@ -8,7 +8,7 @@ orbit insertion (cost: deep-space maneuvers plus the capture burn).
 departure delta-v beyond the launch-vinf allowance). ``dfd`` and ``dfd-1mw``
 are continuous-thrust Direct Fusion Drive models: a Sims-Flanagan
 gravity-assist problem (``lowthrust.MgaLowThrust``) from a 20 t Earth-escape
-launch to a circular Neptune orbit (cost: propellant). ``nep`` is a
+launch to a highly eccentric Neptune orbit (cost: propellant). ``nep`` is a
 constrained Sims-Flanagan ``mga_lt_nep`` that serves as a GMAT seed and has no
 decoder.
 
@@ -29,6 +29,7 @@ import pykep as pk
 
 import lowthrust
 import mission
+import paths
 
 # Decision-vector contract. For every model x[0] is the launch epoch in
 # MJD2000 (both pykep UDPs put t0 first); that is the only gene any code
@@ -330,8 +331,11 @@ DFD_SPACECRAFT = {
         launch_c3_km2s2=0.0,        # C3 = 0: no launch v-infinity genes
         n_seg=10,                   # Sims-Flanagan segments per leg
         flyby_vinf_max_kms=20.0,
-        arrival_vinf_max_kms=10.0,
-        orbit_radius_radii=mission.BODIES['N']['lowthrust_orbit']['radius_radii'],
+        arrival_vinf_max_kms=4.0,   # top of the capture table; arrivals end up slow
+        periapsis_radii=mission.BODIES['N']['lowthrust_orbit']['periapsis_radii'],
+        apoapsis_km=mission.BODIES['N']['lowthrust_orbit']['apoapsis_km'],
+        capture_eta=0.2,            # Q-law coasting cut: 0 = fastest, more = less propellant
+        capture_kswitch=5.0,
         high_fidelity=False)
     for name, engine in (('dfd', 'dfd-2mw'), ('dfd-1mw', 'dfd-1mw'))}
 
@@ -343,11 +347,18 @@ DFD_TOF_DAYS = [700.0, 5500.0]
 def _build_dfd(name):
     """Return a builder of the Sims-Flanagan DFD problem for one spacecraft preset."""
     def build(setup, multi_objective):
-        """Build ``lowthrust.MgaLowThrust`` for a ``mission.Setup``."""
+        """Build ``lowthrust.MgaLowThrust`` for a ``mission.Setup``.
+
+        The capture table is built on first use (a few minutes, in parallel)
+        and cached under ``results/cache/``; later builds load it.
+        """
+        sc, dest = DFD_SPACECRAFT[name], setup.planets[-1]
+        table = lowthrust.capture_table(sc, dest.mu_self, dest.radius,
+                                        cache_dir=paths.RESULTS_DIR / 'cache')
         return lowthrust.MgaLowThrust(
-            setup.planets, DFD_SPACECRAFT[name],
+            setup.planets, sc,
             t0=[setup.window[0].mjd2000, setup.window[1].mjd2000],
-            tof_days=setup.tof_days, multi_objective=multi_objective)
+            tof_days=setup.tof_days, multi_objective=multi_objective, table=table)
     return build
 
 
@@ -395,8 +406,9 @@ def _decode_dfd(udp, x):
             cruise_propellant_kg=sc.wet_mass_kg - float(b['end'][-1][2]),
             leg_end_mass_kg=[float(e[2]) for e in b['end']],
             flyby_vinf_in_ms=[float(np.linalg.norm(fb['vinf_in'])) for fb in b['flybys']],
-            capture=dict(cap, orbit_radius_km=sc.orbit_radius_radii * udp.planets[-1].radius / 1e3,
-                         orbit_radius_radii=sc.orbit_radius_radii),
+            capture=dict(cap, periapsis_radii=sc.periapsis_radii,
+                         periapsis_km=sc.periapsis_radii * udp.planets[-1].radius / 1e3,
+                         apoapsis_km=sc.apoapsis_km),
             max_eq_residual=float(np.max(np.abs(eq))) if len(eq) else 0.0,
             max_ineq_violation=float(max(0.0, np.max(ineq))) if len(ineq) else 0.0,
             leg_end_miss_km=[s['end_miss_m'] / 1e3 for s in segs],
@@ -434,7 +446,8 @@ MODELS = {m.name: m for m in (
             units='kg',
             blurb=(f"Direct Fusion Drive {sc.engine.thrust_n:g} N @ {sc.engine.isp_s:g} s, "
                    f"{sc.wet_mass_kg / 1000:g} t at Earth escape; continuous thrust (Sims-Flanagan) "
-                   f"with gravity assists, spiral into a {sc.orbit_radius_radii:g} R circular orbit"),
+                   f"with gravity assists, Q-law spiral into a {sc.periapsis_radii:g} R x "
+                   f"{sc.apoapsis_km / 1000:.0f} 000 km orbit"),
             objective=dict(kind='lowthrust_capture_propellant', **sc.record()),
             build=_build_dfd(name), decode=_decode_dfd,
             constrained=True, penalty='weighted', local='ipopt', polish_scale=sc.wet_mass_kg,

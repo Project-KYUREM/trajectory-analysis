@@ -44,7 +44,7 @@ Both take `--sweep` (one search per synodic launch slice) and `--help`.
 | `capture`   | mga_1dsm + insertion into an e=0.99 ellipse | deep-space maneuvers + capture burn (m/s) |
 | `ballistic` | mga, gravity assists only, flyby arrival     | departure Δv beyond the launch allowance (m/s) |
 | `nep`       | mga_lt_nep, 40 kWe nuclear-electric          | builds and runs but is not decoded or published; the NEP path is "export a `ballistic`/`capture` GMAT seed and convert the impulses to finite burns in GMAT" |
-| `dfd`       | Sims-Flanagan MGA (`lowthrust.MgaLowThrust`), Direct Fusion Drive 10 N @ 10 000 s (2 MW), 20 t at Earth escape, continuous thrust + gravity assists, low-thrust spiral into a 10 R_N circular Neptune orbit | propellant, cruise + capture (kg); time axis includes the capture spiral |
+| `dfd`       | Sims-Flanagan MGA (`lowthrust.MgaLowThrust`), Direct Fusion Drive 10 N @ 10 000 s (2 MW), 20 t at Earth escape, continuous thrust + gravity assists, Q-law low-thrust capture into a 1.25 R_N × 443 449 km Neptune orbit | propellant, cruise + capture (kg); time axis includes the capture spiral |
 | `dfd-1mw`   | as `dfd` with the 1 MW engine, 5 N @ 10 000 s | as `dfd` |
 
 Sequences are strings over the body registry (`V E M J S U N`), Earth first,
@@ -68,16 +68,35 @@ Mission model:
 - **Gravity assists**: unpowered and exact by construction (`pykep.fb_prop` with
   periapsis-radius and plane-angle genes, periapsis ≥ the body's safe radius);
   thrust on the legs on either side.
-- **Capture**: the final leg arrives with a free v∞ (a gene). The spiral to a
-  circular orbit of radius r costs `Δv = v∞ + sqrt(μ/r)` (shed v∞ far out, then
-  spiral from parabolic to circular; Edelbaum limit, an upper bound) and
-  takes `Δm · c / T`, which is added to the time objective. Target: 10 R_N
-  (~246 000 km, between Proteus and Triton), set in `mission.BODIES['N']['lowthrust_orbit']`.
+- **Capture into a highly eccentric orbit**: periapsis 1.25 R_N (30 778 km),
+  apoapsis 1.25 × Triton's orbital radius (443 449 km); e = 0.87, period
+  ~3.2 days. Set in `mission.BODIES['N']['lowthrust_orbit']`. The final leg
+  arrives with a free v∞ (a gene, ≤ 4 km/s, or less where the table caps it). The planetocentric phase is
+  flown numerically (`lowthrust.capture_sim`): planar two-body motion from
+  5 × the target apoapsis on the arrival hyperbola, thrust steered by a
+  Q-law (Petropoulos 2004) that drives orbital energy and periapsis radius to
+  their targets together, so the spiral ends on the target orbit and never
+  dips into the planet. It thrusts continuously until the orbit is bound with
+  apoapsis below 5 × the target's (`capture_kswitch`), then coasts wherever
+  thrust is less than 20 % as effective as at the best point of the orbit
+  (`capture_eta`; 0 = never coast: about twice the Δv in half the time).
+  Δv and duration are tabulated once over arrival v∞ × arrival mass
+  (`lowthrust.CaptureTable`, built in parallel on first use, a few minutes,
+  then cached in `results/cache/`) and interpolated in every fitness call;
+  the duration is added to the time objective. Lookups use a bicubic
+  spline, so the polish sees a smooth problem. The table keeps the
+  v∞ rows where every mass converged (efficient law first, continuous thrust
+  as fallback); arrivals faster than that are refused by a constraint. Periapsis at 1.25 R_N lies inside the
+  ring system (rings to ~2.5 R_N), so ring-plane crossings need checking in
+  a 3-D follow-up; the planar capture does not model them, nor the
+  orientation of the final orbit.
 - **Cost**: propellant = 20 000 kg − mass in the final orbit; the final mass
   must stay ≥ `min_final_mass_kg` (10 000 kg).
 
 Engine numbers (`lowthrust.ENGINES`) are published Princeton Satellite Systems
-/ PPPL DFD design estimates (~10 000 s, 5–10 N per MW), not flight data; put
+/ PPPL DFD design estimates (~10 000 s, 2.5–10 N per MW depending on the
+source; see [Low-thrust (DFD) references](#low-thrust-dfd-references)), not
+flight data; put
 your engine's thrust, Isp and dry mass in `lowthrust.ENGINES` /
 `models.DFD_SPACECRAFT` and every result records them (`assumptions` in the
 result header).
@@ -94,15 +113,18 @@ cruise-time group, one per distinct launch day / cruise day) are only as
 diverse as the slices they come from. `models.PENALTY_WEIGHT` sets how hard
 the global stage is pushed towards feasibility. Every point carries `feasible` and
 `violation`; only feasible points can be on the front, and only feasible
-points are published. Expect only part of the polished seeds to close: in
-analytic-ephemeris tests 0–75 % per run (EJN 3 of 4; EN between 0 of 4 and
-1 of 2) from one small unswept population, whose individuals still sat at
-~0.5 non-dimensional match-point violation: the global stage only places
-the seeds, and the polish does the work. More seeds (`--polish`), more
-slices (`--sweep`) and more hops (`--polish-stop`) raise the yield. A polish of one point (MBH, 5 hops of up to 1000 IPOPT
-iterations) takes ~5–12 min for a 2-leg sequence, more for longer ones, so
-`--polish 32` on 8 cores is roughly 30–50 min per sequence on top of the
-search. `--polish-maxeval` and `--polish-stop` trade time for feasibility.
+points are published. Expect only part of the polished seeds to close. In
+analytic-ephemeris tests with the eccentric-orbit capture, EJN closed 1 of 4
+seeds in each of three runs, and the others stopped at 1e-5 to 7e-4
+non-dimensional residual against the 1e-6 tolerance (`models.C_TOL`; 1e-5 is
+~1500 km and ~0.3 m/s at a match point). The small population's individuals
+sat at ~0.5 residual: the global stage only places the seeds, and the
+polish does the work. More seeds (`--polish`), more slices (`--sweep`) and
+more hops (`--polish-stop`) raise the yield. A polish of one point (MBH, 5 hops of up to 1000 IPOPT
+iterations) takes ~5–10 min for a 2-leg sequence on one core, more for longer
+ones, so `--polish 32` on 8 cores is roughly 30–50 min per sequence on top of
+the search. The first run of a vehicle also builds its capture table (~40 s
+on 4 cores for `dfd`). `--polish-maxeval` and `--polish-stop` trade time for feasibility.
 
 ```bash
 # one sequence, cheapest trajectory
@@ -151,7 +173,7 @@ drawn as the coasts between Sims-Flanagan impulses).
 | `orbit_planning/paths.py`       | filesystem layout + default matrix (kernel-free) |
 | `orbit_planning/mission.py`     | SPICE kernels, body registry, sequences, launch-window slicing |
 | `orbit_planning/models.py`      | the models: build / decode / cost / objective, `problem()`, `evaluate()`; the DFD vehicle |
-| `orbit_planning/lowthrust.py`   | Sims-Flanagan gravity-assist problem, DFD engine presets, low-thrust capture model |
+| `orbit_planning/lowthrust.py`   | Sims-Flanagan gravity-assist problem, DFD engine presets, Q-law capture simulation and its cached table |
 | `orbit_planning/search.py`      | archipelago, MBH polish, parallel polish pool, shared CLI |
 | `orbit_planning/optimize.py`    | single-objective search (+ `--sweep`) |
 | `orbit_planning/pareto.py`      | NSGA-II front (+ `--sweep`, `--polish`) |
@@ -556,3 +578,73 @@ Sources behind `aerocapture/triton/` (the Neptune-system sources above apply too
   satellite orbiters.
 - Y. Kozai, "Secular perturbations of asteroids with high inclination and
   eccentricity", *Astron. J.* 67, 591, 1962. https://doi.org/10.1086/108790
+
+## Low-thrust (DFD) references
+
+Sources behind `orbit_planning/lowthrust.py` and the `dfd` models. The
+Neptune-system sources above (Jacobson 2009 for Triton's orbit; Domingos et
+al. 2006 for Hill-sphere stability) apply too. No published source was found
+for a Princeton engine named "Starfire"; the engine presets use the Princeton
+Satellite Systems / PPPL Direct Fusion Drive numbers below.
+
+### Direct Fusion Drive
+
+- S. J. Thomas, M. A. Paluszek, S. A. Cohen, "Fusion-Enabled Pluto Orbiter
+  and Lander", AIAA, 2017 (NASA NIAC Phase I results).
+  https://w3.pppl.gov/ppst/docs/thomas2017aiaa.pdf — 5 N of constant thrust
+  delivers ~1000 kg to Pluto orbit in ~4 years; up to 1 MW of electric power
+  to the payload on arrival. Basis of the `dfd-1mw` preset (5 N).
+- S. J. Thomas, M. A. Paluszek, S. A. Cohen, "Fusion-Enabled Pluto Orbiter
+  and Lander", NIAC Phase II final report (award 80NSSC18K0040), 2019, NTRS
+  20190031807. https://ntrs.nasa.gov/citations/20190031807 — the PFRC-based
+  engine and mission design.
+- NASA NIAC project summary, "Fusion Enabled Pluto Orbiter and Lander".
+  https://www.nasa.gov/directorates/spacetech/niac/2017_Phase_I_Phase_II/Fusion_Enabled_Pluto_Orbiter_and_Lander
+  — 2.5–5 N of thrust per MW of fusion power at an Isp of ~10 000 s.
+- S. A. Cohen et al., "Direct Fusion Drive for Interstellar Exploration",
+  *J. British Interplanetary Society* 72(2), 37–50, 2019.
+  https://w3.pppl.gov/ppst/docs/cohen2019jbis.pdf — 1–10 MW engine range,
+  thrust augmentation, subsystem mass budget.
+- Gajeri, Aime, Kezerashvili, "A Titan mission using the Direct Fusion
+  Drive", arXiv:2009.12621, 2020. https://arxiv.org/abs/2009.12621 — DFD
+  trajectory study with constant thrust and Isp; quotes ~10 000 s Isp and
+  5–10 N per MW of thrust power (PSS estimate), 0.75–1.25 kW/kg specific power.
+  Basis of the `dfd-2mw` preset (10 N).
+- "Direct Fusion Drive", Wikipedia. https://en.wikipedia.org/wiki/Direct_Fusion_Drive
+  — overview and further references.
+
+### Low-thrust trajectory methods
+
+- J. A. Sims, S. N. Flanagan, "Preliminary Design of Low-Thrust
+  Interplanetary Missions", AAS/AIAA Astrodynamics Specialist Conference,
+  AAS 99-338, 1999 — the transcription (impulses at segment midpoints,
+  forward/backward propagation to a match point) in `MgaLowThrust`.
+- C. H. Yam, D. di Lorenzo, D. Izzo, "Low-Thrust Trajectory Design as a
+  Constrained Global Optimization Problem", *Proc. IMechE Part G* 225(11),
+  1243–1251, 2011 — Sims-Flanagan multiple-gravity-assist as a global
+  optimisation problem (pykep's `mga_lt_nep`); the constraint
+  non-dimensionalisation follows it.
+- A. E. Petropoulos, "Low-Thrust Orbit Transfers Using Candidate Lyapunov
+  Functions with a Mechanism for Coasting", AIAA/AAS Astrodynamics
+  Specialist Conference, AIAA 2004-5089, 2004. https://doi.org/10.2514/6.2004-5089
+  — the Q-law: Lyapunov steering and effectivity-based coasting, used in the
+  Neptune capture spiral (`lowthrust.capture_sim`).
+- D. Izzo, "PyGMO and PyKEP: open source tools for massively parallel
+  optimization in astrodynamics (the case of interplanetary trajectory
+  optimization)", 5th International Conference on Astrodynamics Tools and
+  Techniques (ICATT), 2012. https://github.com/esa/pykep — Sims-Flanagan legs,
+  flyby propagation, Kepler propagation.
+- F. Biscani, D. Izzo, "A parallel global multiobjective framework for
+  optimization: pagmo", *JOSS* 5(53), 2338, 2020.
+  https://doi.org/10.21105/joss.02338 — archipelagos, SADE, NSGA-II, MBH, and the
+  IPOPT / NLopt wrappers of the polish.
+
+### Neptune target orbit
+
+- NASA NSSDC Neptune fact sheet. https://nssdc.gsfc.nasa.gov/planetary/factsheet/neptunefact.html
+  — equatorial radius 24 764 km at 1 bar; the code uses the 24 622 km
+  volumetric mean radius, as `mission.BODIES` and AMAT do (the target
+  periapsis, 1.25 R_N, is 30 778 km).
+- JPL Solar System Dynamics, planetary satellite mean elements.
+  https://ssd.jpl.nasa.gov/sats/elem/ — Triton's semi-major axis, 354 759 km
+  (Jacobson 2009 ephemeris); the target apoapsis is 1.25 × that, 443 449 km.

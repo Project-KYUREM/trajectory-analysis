@@ -148,7 +148,8 @@ def describe(model_name, sequence, x):
         cap = lt['capture']
         description['arrival'].update(
             capture_dv_ms=cap['dv_ms'], capture_spiral_days=cap['days'],
-            orbit_radius_km=cap['orbit_radius_km'], final_mass_kg=lt['final_mass_kg'],
+            orbit_periapsis_km=cap['periapsis_km'], orbit_apoapsis_km=cap['apoapsis_km'],
+            final_mass_kg=lt['final_mass_kg'],
             orbit_epoch_mjd2000=float(epochs[-1]) + cap['days'],
             orbit_date=_date(float(epochs[-1]) + cap['days']))
         description['totals'].update(

@@ -164,7 +164,8 @@ def polish(prob, x, maxeval=5000, stop=5, perturb=1e-3, local='cobyla', scale=No
     COBYLA is derivative-free, which suits the pykep problems: they expose no
     gradient. On a constrained problem (``prob.c_tol`` set) MBH ranks points
     feasibility first, so the result is the best *feasible* point found when
-    there is one.
+    there is one. On the scaled path, a champion that ends just outside the
+    tolerance gets one more descent with three times the iterations.
 
     Args:
         prob (pygmo.problem): Single-objective problem to minimise.
@@ -197,8 +198,23 @@ def polish(prob, x, maxeval=5000, stop=5, perturb=1e-3, local='cobyla', scale=No
     pop = pg.population(unit)
     pop.push_back(box.to_u(x))
     pop = pg.algorithm(pg.mbh(pg.algorithm(algo), stop=stop, perturb=perturb)).evolve(pop)
+    if not unit.feasibility_x(pop.champion_x) and _violation(unit, pop.champion_f) < 1e-3:
+        # Close but not inside c_tol: one longer descent from the champion
+        # usually finishes the job the MBH hops ran out of iterations for.
+        finish = pg.population(unit)
+        finish.push_back(pop.champion_x, pop.champion_f)
+        finish = pg.algorithm(local_algorithm(local, 3 * maxeval)).evolve(finish)
+        if unit.feasibility_x(finish.champion_x):
+            pop = finish
     x_best = box.to_x(pop.champion_x)
     return float(prob.fitness(x_best)[0]), x_best
+
+
+def _violation(prob, f):
+    """Return the largest constraint violation of a fitness vector."""
+    n_obj, n_eq = prob.get_nobj(), prob.get_nec()
+    return max([abs(c) for c in f[n_obj:n_obj + n_eq]]
+               + [max(0.0, c) for c in f[n_obj + n_eq:]], default=0.0)
 
 
 def polish_job(job):
