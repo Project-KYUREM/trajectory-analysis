@@ -14,6 +14,11 @@ DOCS_DATA_DIR = DOCS_DIR / "data"   # compacted site payload (committed)
 DEFAULT_MODELS = ("capture", "ballistic")
 DEFAULT_SEQUENCES = ("EVEEJN", "EVEJN", "EVJN", "EVVEJN", "EJN")
 
+# Default gravity-assist sequences of the low-thrust (DFD) sequence sweep:
+# direct, then Jupiter / Saturn / Uranus assists, then inner-planet pumps.
+# sequence_sweep.py's SEQUENCES list starts from this; edit either.
+DFD_SEQUENCES = ("EN", "EJN", "ESN", "EUN", "EJSN", "EJUN", "EEJN", "EVEJN", "EMJN", "EVEEJN")
+
 
 def csv_list(text, upper=False):
     """Split a comma-separated CLI value into a list of items.

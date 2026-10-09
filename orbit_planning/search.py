@@ -70,11 +70,101 @@ def best_champion(archi):
     return float(fs[best][0]), list(xs[best]), best
 
 
-def polish(prob, x, maxeval=5000, stop=5, perturb=1e-3):
-    """Refine a decision vector by monotonic basin hopping around COBYLA.
+class UnitBox:
+    """Present a problem on the unit box with its objective divided by a scale.
+
+    Gradient-based local solvers (SLSQP, IPOPT) start from an identity Hessian
+    and step in raw units, so genes spanning 1e4 days next to throttles in
+    [-1, 1], and an objective in kilograms next to residuals of 1e-6, stall
+    them. Mapping every gene to [0, 1] and the objective to O(1) fixes that;
+    constraints are left as they are (the UDP already non-dimensionalises them).
+
+    Args:
+        prob (pygmo.problem): Problem to wrap.
+        scale (float): Divisor of every objective.
+    """
+
+    def __init__(self, prob, scale):
+        """Store the problem, its bounds and the objective scale."""
+        self._prob = prob
+        self._lb, self._ub = (list(b) for b in prob.get_bounds())
+        self._scale = float(scale)
+        self._nobj = prob.get_nobj()
+
+    def to_x(self, u):
+        """Map a unit-box vector to the problem's decision vector."""
+        return [lo + ui * (hi - lo) for ui, lo, hi in zip(u, self._lb, self._ub)]
+
+    def to_u(self, x):
+        """Map a decision vector to the unit box (zero-width genes map to 0)."""
+        return [(xi - lo) / (hi - lo) if hi > lo else 0.0
+                for xi, lo, hi in zip(x, self._lb, self._ub)]
+
+    def fitness(self, u):
+        """Return the wrapped fitness with its objectives scaled."""
+        f = list(self._prob.fitness(self.to_x(u)))
+        return [v / self._scale for v in f[:self._nobj]] + f[self._nobj:]
+
+    def gradient(self, u):
+        """Return a central-difference gradient on the unit box."""
+        return pg.estimate_gradient(self.fitness, u, dx=1e-7)
+
+    def get_bounds(self):
+        """Return the unit box."""
+        return [0.0] * len(self._lb), [1.0] * len(self._lb)
+
+    def get_nobj(self):
+        """Return the number of objectives."""
+        return self._nobj
+
+    def get_nec(self):
+        """Return the number of equality constraints."""
+        return self._prob.get_nec()
+
+    def get_nic(self):
+        """Return the number of inequality constraints."""
+        return self._prob.get_nic()
+
+
+def local_algorithm(name, maxeval):
+    """Return the local NLP solver MBH wraps.
+
+    Args:
+        name (str): ``cobyla`` (derivative-free, the chemical models' default),
+            ``slsqp`` (nlopt, finite-difference gradients) or ``ipopt``
+            (interior point, finite-difference gradients; the most reliable at
+            closing the match-point equalities of a Sims-Flanagan problem).
+        maxeval (int): Evaluation (``cobyla``) or iteration (``slsqp``,
+            ``ipopt``) cap per local descent.
+
+    Returns:
+        pygmo.nlopt or pygmo.ipopt: The configured solver.
+    """
+    if name == 'ipopt':
+        local = pg.ipopt()
+        local.set_integer_option('max_iter', maxeval)
+        local.set_integer_option('print_level', 0)
+        local.set_numeric_option('tol', 1e-8)
+        # well inside models.C_TOL, so a converged descent is feasible by pygmo's test
+        local.set_numeric_option('constr_viol_tol', 1e-2 * models.C_TOL)
+        local.set_string_option('hessian_approximation', 'limited-memory')
+        local.set_string_option('sb', 'yes')   # no IPOPT banner per descent
+        return local
+    local = pg.nlopt(name)
+    local.maxeval = maxeval
+    if name == 'slsqp':
+        local.ftol_rel = 1e-10
+        local.xtol_rel = 1e-10
+    return local
+
+
+def polish(prob, x, maxeval=5000, stop=5, perturb=1e-3, local='cobyla', scale=None):
+    """Refine a decision vector by monotonic basin hopping around a local solver.
 
     COBYLA is derivative-free, which suits the pykep problems: they expose no
-    gradient.
+    gradient. On a constrained problem (``prob.c_tol`` set) MBH ranks points
+    feasibility first, so the result is the best *feasible* point found when
+    there is one.
 
     Args:
         prob (pygmo.problem): Single-objective problem to minimise.
@@ -85,17 +175,30 @@ def polish(prob, x, maxeval=5000, stop=5, perturb=1e-3):
             Defaults to 5.
         perturb (float, optional): Hop size as a fraction of each variable's
             range. Defaults to 1e-3.
+        local (str, optional): Local solver, see ``local_algorithm``. Defaults
+            to ``cobyla``.
+        scale (float, optional): Solve on the unit box with the objective
+            divided by ``scale`` (see ``UnitBox``); ``None`` solves the problem
+            as given. Defaults to None.
 
     Returns:
         tuple[float, list[float]]: ``(cost, x)`` of the best point found, never
-        worse than the start.
+        worse than the start (feasibility first on a constrained problem).
     """
-    local = pg.nlopt('cobyla')
-    local.maxeval = maxeval
-    pop = pg.population(prob)
-    pop.push_back(x)
-    pop = pg.algorithm(pg.mbh(pg.algorithm(local), stop=stop, perturb=perturb)).evolve(pop)
-    return float(pop.champion_f[0]), list(pop.champion_x)
+    algo = local_algorithm(local, maxeval)
+    if scale is None:
+        pop = pg.population(prob)
+        pop.push_back(x)
+        pop = pg.algorithm(pg.mbh(pg.algorithm(algo), stop=stop, perturb=perturb)).evolve(pop)
+        return float(pop.champion_f[0]), list(pop.champion_x)
+    box = UnitBox(prob, scale)
+    unit = pg.problem(box)
+    unit.c_tol = list(prob.c_tol)
+    pop = pg.population(unit)
+    pop.push_back(box.to_u(x))
+    pop = pg.algorithm(pg.mbh(pg.algorithm(algo), stop=stop, perturb=perturb)).evolve(pop)
+    x_best = box.to_x(pop.champion_x)
+    return float(prob.fitness(x_best)[0]), x_best
 
 
 def polish_job(job):
@@ -106,17 +209,39 @@ def polish_job(job):
             hi]`` launch bounds in MJD2000), optional ``tof_days`` (``[lo, hi]``
             time-of-flight band), ``maxeval`` and ``stop``.
 
+    Constrained models are polished on their true constrained problem with the
+    model's local solver; ``feasible`` then reports whether the result meets
+    every constraint (always True for unconstrained models).
+
     Returns:
-        dict: ``before``, ``after``, ``x`` and ``seconds``.
+        dict: ``before``, ``before_feasible``, ``after``, ``x``, ``feasible``,
+        ``violation`` and ``seconds``.
     """
     lo, hi = job['window_mjd2000']
-    prob = models.problem(job['model'], job['sequence'],
-                          launch_window=[pk.epoch(lo, 'mjd2000'), pk.epoch(hi, 'mjd2000')],
-                          tof_days=job.get('tof_days'))
-    before = float(prob.fitness(job['x'])[0])
+    window = [pk.epoch(lo, 'mjd2000'), pk.epoch(hi, 'mjd2000')]
+    model = models.get(job['model'])
+    prob = models.problem(job['model'], job['sequence'], launch_window=window,
+                          tof_days=job.get('tof_days'), constrained=True)
+    x0 = clip(prob, job['x'])
+    before = float(prob.fitness(x0)[0])
+    before_feasible = bool(prob.feasibility_x(x0))
     t0 = time.time()
-    after, x = polish(prob, job['x'], maxeval=job['maxeval'], stop=job['stop'])
-    return dict(before=before, after=after, x=x, seconds=time.time() - t0)
+    after, x = polish(prob, x0, maxeval=job['maxeval'], stop=job['stop'], local=model.local,
+                      scale=model.polish_scale)
+    score = models.evaluate(job['model'], job['sequence'], x, window, job.get('tof_days'))
+    return dict(before=before, before_feasible=before_feasible, after=after, x=x,
+                feasible=score['feasible'],
+                violation=score['violation'], seconds=time.time() - t0)
+
+
+def clip(prob, x):
+    """Clip a decision vector into a problem's bounds.
+
+    A point pinned to a narrow polish band (pareto.py) can sit a hair outside
+    it, which pygmo refuses.
+    """
+    lb, ub = prob.get_bounds()
+    return [min(max(v, lo), hi) for v, lo, hi in zip(x, lb, ub)]
 
 
 def parallel_polish(jobs, workers=None):
@@ -173,12 +298,39 @@ def add_search_args(parser, islands, pop, gen, rounds):
                         help='slice width in days (default: first-leg synodic period)')
     parser.add_argument('--overlap', type=float, default=0.2,
                         help='fractional overlap between adjacent slices')
-    parser.add_argument('--polish-maxeval', type=int, default=5000, dest='polish_maxeval',
-                        help='COBYLA evaluations per local descent during the polish')
+    parser.add_argument('--polish-maxeval', type=int, default=None, dest='polish_maxeval',
+                        help='evaluations (COBYLA) or iterations (SLSQP) per local descent '
+                             'during the polish (default: 5000 COBYLA, 300 SLSQP)')
     parser.add_argument('--polish-stop', type=int, default=5, dest='polish_stop',
                         help='consecutive non-improving basin hops before the polish stops')
     parser.add_argument('--polish-workers', type=int, default=None, dest='polish_workers',
                         help='parallel polish processes (default: CPU count)')
+
+
+# Default --polish-maxeval per local solver: COBYLA counts evaluations, the
+# gradient solvers count iterations (each a finite-difference gradient).
+POLISH_MAXEVAL = {'cobyla': 5000, 'slsqp': 500, 'ipopt': 1000}
+
+
+def finish_args(args):
+    """Fill the CLI defaults that depend on the chosen model, in place.
+
+    Args:
+        args (argparse.Namespace): Parsed CLI arguments from ``add_search_args``.
+
+    Returns:
+        argparse.Namespace: ``args``, with ``polish_maxeval`` resolved and
+        ``sequence`` upper-cased.
+    """
+    args.sequence = args.sequence.upper()
+    if args.polish_maxeval is None:
+        args.polish_maxeval = POLISH_MAXEVAL[models.get(args.model).local]
+    return args
+
+
+def rank(record):
+    """Sort key of a scored record: feasible before infeasible, then cheaper first."""
+    return (not record.get('feasible', True), record['cost'])
 
 
 def output_path(args, filename):
@@ -218,8 +370,10 @@ def result_header(args):
         'labels': setup.labels,
         'cost_label': model.label,
         'cost_units': model.units,
-        'tof_bounds_days': mission.MISSION_TOF_DAYS,
-        'vinf_bounds_kms': mission.LAUNCH_VINF_KMS,
+        'tof_bounds_days': models.tof_bounds(model.name),
+        'vinf_bounds_kms': model.launch_vinf_kms or mission.LAUNCH_VINF_KMS,
+        'constrained': model.constrained,
+        **({'assumptions': model.assumptions} if model.assumptions else {}),
     }
 
 
@@ -242,6 +396,8 @@ def run_settings(args, wall_seconds, **extra):
         'slice_width_days': args.slice_width if args.sweep else None,
         'overlap': args.overlap if args.sweep else None,
         'wall_seconds': round(wall_seconds, 1),
+        'polish_local': models.get(args.model).local,
+        'polish_maxeval': args.polish_maxeval, 'polish_stop': args.polish_stop,
         'objective': models.get(args.model).objective,
         'destination_capture': mission.resolve_bounds(args.sequence).destination.get('capture'),
         **extra,

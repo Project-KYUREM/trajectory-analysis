@@ -135,10 +135,14 @@ def publish_run(model_name, sequence):
     if raw.get('schema') != paths.RESULT_SCHEMA:
         raise ValueError(f"result schema {raw.get('schema')} != {paths.RESULT_SCHEMA}")
     model = models.get(model_name)
+    # Constrained models (dfd) carry infeasible individuals; they are not
+    # trajectories, so they never reach the site.
     points = [dict(id=f"p{i:05d}", cost=p['cost'], tof_days=p['tof_days'],
                    launch_mjd2000=p['launch_mjd2000'], pareto=p['pareto'],
                    polished=p.get('polished', False), x=p['x'])
-              for i, p in enumerate(raw['points'])]
+              for i, p in enumerate(raw['points']) if p.get('feasible', True)]
+    if not points:
+        raise ValueError("no feasible point in the run")
     select_detail(points)
 
     detail = {}

@@ -69,11 +69,15 @@ def gm(body):
 # safe_ratio: periapsis floor for fb_prop, in planet radii. Jupiter's 9.0 is
 #   pykep's own convention (radiation-belt standoff). Saturn is deliberately
 #   NOT pykep's 1.1 -- that would fly through the B ring; 2.4 clears the F
-#   ring (~2.32 R_S).
+#   ring (~2.32 R_S). Uranus's 2.1 clears the epsilon ring (~2.0 R_U); like
+#   Saturn it has no planet-centre ephemeris in de440, so its barycenter
+#   stands in.
 # capture / entry_altitude_m: present only on bodies that can end a sequence.
 #   capture = the loose insertion ellipse the `capture` model prices;
 #   entry_altitude_m = height of the atmospheric entry interface above the
 #   1-bar radius, used for the reported entry speed.
+# lowthrust_orbit: the circular orbit the low-thrust (DFD) models spiral into,
+#   in planet radii; see models.DFD_SPACECRAFT and lowthrust.capture_cost.
 BODIES = {
     'V': dict(label='Venus', ephem='VENUS', gm_of='VENUS',
               radius=6051800.0, safe_ratio=1.1),
@@ -85,11 +89,16 @@ BODIES = {
               radius=71492000.0, safe_ratio=9.0),
     'S': dict(label='Saturn', ephem='SATURN BARYCENTER', gm_of='SATURN',
               radius=60268000.0, safe_ratio=2.4),
+    'U': dict(label='Uranus', ephem='URANUS BARYCENTER', gm_of='URANUS',
+              radius=25559000.0, safe_ratio=2.1),
     'N': dict(label='Neptune', ephem='NEPTUNE', gm_of='NEPTUNE',
               radius=24622000.0, safe_ratio=1.1,
               # loose first-capture ellipse (cheap to enter, walked down later);
               # 1000 km is the usual giant-planet entry-interface altitude
-              capture=dict(rp_ratio=1.1, e=0.99), entry_altitude_m=1000e3),
+              capture=dict(rp_ratio=1.1, e=0.99), entry_altitude_m=1000e3,
+              # 10 R_N ~ 246 000 km: outside the rings and Proteus (4.8 R_N),
+              # inside Triton (14.3 R_N), deep inside the Hill sphere
+              lowthrust_orbit=dict(radius_radii=10.0)),
 }
 
 _planet_cache = {}

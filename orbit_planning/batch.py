@@ -42,6 +42,51 @@ def _existing_run(path):
                        f"{(settings.get('wall_seconds') or 0) / 60:.0f} min"}
 
 
+def run_pairs(pairs, forwarded, force=False, script=PARETO, filename='pareto.json'):
+    """Run a search script once per (model, sequence) pair, each in its own process.
+
+    Args:
+        pairs (list[tuple[str, str]]): ``(model, sequence)`` pairs, in order.
+        forwarded (list[str]): Extra CLI options passed to every run.
+        force (bool, optional): Rerun pairs whose result file already holds the
+            same kind of run. Defaults to False.
+        script (pathlib.Path, optional): ``pareto.py`` or ``optimize.py``.
+            Defaults to ``pareto.py``.
+        filename (str, optional): The result file the script writes, checked
+            for the skip. Defaults to ``pareto.json``.
+
+    Returns:
+        dict: ``{(model, sequence): status}`` with status ``ok``, ``skipped``
+        or ``failed``.
+    """
+    want_sweep = '--sweep' in forwarded
+    t_all, status = time.time(), {}
+    for model, sequence in pairs:
+        existing = _existing_run(paths.results_path(model, sequence, filename))
+        if existing and not force:
+            # A quick unswept result must not satisfy a request for a sweep:
+            # "exists" is only a reason to skip when it is the same kind of run.
+            if existing['swept'] == want_sweep:
+                print(f"  skip {model}/{sequence} (exists: {existing['summary']})")
+                status[(model, sequence)] = 'skipped'
+                continue
+            print(f"  redo {model}/{sequence} (exists but {existing['summary']}; "
+                  f"{'sweep' if want_sweep else 'single window'} requested)")
+        print(f"\n===== {model}/{sequence} =====", flush=True)
+        t0 = time.time()
+        # Output streams straight through: a swept run takes an hour and its
+        # per-slice progress is the only sign of life.
+        result = subprocess.run([sys.executable, str(script), '--model', model,
+                                 '--sequence', sequence, *forwarded])
+        ok = result.returncode == 0
+        print(f"===== {model}/{sequence}: {'ok' if ok else f'FAILED (exit {result.returncode})'} "
+              f"in {time.time() - t0:.0f}s =====", flush=True)
+        status[(model, sequence)] = 'ok' if ok else 'failed'
+    done = sum(v == 'ok' for v in status.values())
+    print(f"\nbatch done: {done}/{len(pairs)} run in {(time.time() - t_all) / 60:.1f} min")
+    return status
+
+
 def main():
     """Run ``pareto.py`` for each (model, sequence) pair not already done."""
     parser = argparse.ArgumentParser(description=__doc__,
@@ -55,29 +100,7 @@ def main():
     pairs = [(m, s) for m in paths.csv_list(args.models)
              for s in paths.csv_list(args.sequences, upper=True)]
     print(f"batch: {len(pairs)} (model, sequence) pairs; forwarding {forwarded or 'nothing'}\n")
-
-    want_sweep = '--sweep' in forwarded
-    t_all, done = time.time(), 0
-    for model, sequence in pairs:
-        existing = _existing_run(paths.results_path(model, sequence, 'pareto.json'))
-        if existing and not args.force:
-            # A quick unswept result must not satisfy a request for a sweep:
-            # "exists" is only a reason to skip when it is the same kind of run.
-            if existing['swept'] == want_sweep:
-                print(f"  skip {model}/{sequence} (exists: {existing['summary']})")
-                continue
-            print(f"  redo {model}/{sequence} (exists but {existing['summary']}; "
-                  f"{'sweep' if want_sweep else 'single window'} requested)")
-        print(f"\n===== {model}/{sequence} =====", flush=True)
-        t0 = time.time()
-        # Output streams straight through: a swept run takes an hour and its
-        # per-slice progress is the only sign of life.
-        result = subprocess.run([sys.executable, str(PARETO), '--model', model,
-                                 '--sequence', sequence, *forwarded])
-        status = 'ok' if result.returncode == 0 else f'FAILED (exit {result.returncode})'
-        print(f"===== {model}/{sequence}: {status} in {time.time() - t0:.0f}s =====", flush=True)
-        done += result.returncode == 0
-    print(f"\nbatch done: {done}/{len(pairs)} run in {(time.time() - t_all) / 60:.1f} min")
+    run_pairs(pairs, forwarded, args.force)
 
 
 if __name__ == '__main__':

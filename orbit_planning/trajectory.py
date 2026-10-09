@@ -21,8 +21,13 @@ def to_eme(vec):
 
 
 def _ra_dec(vec):
-    """Return the right ascension and declination, in degrees, of a direction vector."""
+    """Return the right ascension and declination, in degrees, of a direction vector.
+
+    A zero vector (a C3 = 0 launch has no asymptote) gives ``(None, None)``.
+    """
     x, y, z = vec
+    if not float(np.linalg.norm(vec)):
+        return None, None
     return (math.degrees(math.atan2(y, x)) % 360.0,
             math.degrees(math.asin(z / float(np.linalg.norm(vec)))))
 
@@ -54,7 +59,8 @@ def describe(model_name, sequence, x):
     """Decode one trajectory into a JSON-serialisable mission description.
 
     Args:
-        model_name (str): Name of a decodable model, ``capture`` or ``ballistic``.
+        model_name (str): Name of a decodable model: ``capture``, ``ballistic``
+            or a low-thrust model (``dfd``, ``dfd-1mw``).
         sequence (str): Sequence string the vector was optimised for.
         x (list[float]): Decision vector.
 
@@ -63,7 +69,11 @@ def describe(model_name, sequence, x):
         RA/dec in EME2000), ``legs``, ``flybys``, ``arrival`` (vinf, capture burn,
         entry speed), ``totals`` and ``arcs``. Each ``arcs`` entry holds the
         ``r``, ``v``, ``dt`` and ``mu`` a Kepler propagator needs to rebuild that
-        ballistic arc.
+        ballistic arc. Low-thrust models add a ``lowthrust`` section (masses,
+        spacecraft, capture spiral, constraint residuals), per-leg
+        ``impulses``, and in ``legs[i].dsm_ms`` the leg's total thrust delta-v;
+        their arcs are the Sims-Flanagan coasts between impulses, and
+        ``totals.tof_days`` includes the capture spiral.
 
     Raises:
         NotImplementedError: If the model has no decoder.
@@ -79,8 +89,10 @@ def describe(model_name, sequence, x):
 
     epochs = np.cumsum([x[0]] + decoded.leg_tof_days)
     body_v = [planet.eph(float(e))[1] for planet, e in zip(setup.planets, epochs)]
-    vinf_dep = [a - b for a, b in zip(decoded.arc_states[0][1], body_v[0])]
-    vinf_arr = [a - b for a, b in zip(decoded.lamberts[-1].get_v2()[0], body_v[-1])]
+    vinf_dep = (decoded.vinf_dep_vec if decoded.vinf_dep_vec is not None
+                else [a - b for a, b in zip(decoded.arc_states[0][1], body_v[0])])
+    vinf_arr = (decoded.vinf_arr_vec if decoded.vinf_arr_vec is not None
+                else [a - b for a, b in zip(decoded.lamberts[-1].get_v2()[0], body_v[-1])])
     vinf_dep_mag = float(np.linalg.norm(vinf_dep))
     vinf_arr_mag = float(np.linalg.norm(vinf_arr))
     rla, dla = _ra_dec(to_eme(vinf_dep))
@@ -107,7 +119,7 @@ def describe(model_name, sequence, x):
                  r_eclip_m=[float(c) for c in r], v_eclip_ms=[float(c) for c in v])
             for (r, v), t, t_end in zip(decoded.arc_states, decoded.arc_epochs, arc_ends)]
 
-    return {
+    description = {
         'cost': cost,
         'launch': dict(epoch_mjd2000=float(x[0]), date=_date(x[0]),
                        vinf_ms=vinf_dep_mag, c3_km2s2=(vinf_dep_mag / 1000.0) ** 2,
@@ -127,3 +139,21 @@ def describe(model_name, sequence, x):
                        flyby_mismatch_total_ms=float(sum(decoded.flyby_mismatch_ms))),
         'arcs': arcs,
     }
+    if decoded.lowthrust is not None:
+        lt = dict(decoded.lowthrust)
+        for leg, imps in zip(legs, lt.pop('impulses')):
+            leg['impulses'] = [dict(p, date=_date(p['epoch_mjd2000'])) for p in imps]
+        for flyby, vinf in zip(flybys, lt['flyby_vinf_in_ms']):
+            flyby['vinf_ms'] = vinf
+        cap = lt['capture']
+        description['arrival'].update(
+            capture_dv_ms=cap['dv_ms'], capture_spiral_days=cap['days'],
+            orbit_radius_km=cap['orbit_radius_km'], final_mass_kg=lt['final_mass_kg'],
+            orbit_epoch_mjd2000=float(epochs[-1]) + cap['days'],
+            orbit_date=_date(float(epochs[-1]) + cap['days']))
+        description['totals'].update(
+            thrust_dv_ms=float(sum(decoded.leg_dsm_ms)) + cap['dv_ms'],
+            tof_days=total_tof + cap['days'], tof_years=(total_tof + cap['days']) / 365.25,
+            cruise_days=total_tof)
+        description['lowthrust'] = lt
+    return description

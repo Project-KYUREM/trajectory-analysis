@@ -133,6 +133,7 @@ function showDetail(id) {
     return;
   }
   const arrival = d.arrival, launch = d.launch;
+  const lt = d.lowthrust;   // low-thrust (Sims-Flanagan) models only
   head.innerHTML = `
     <h2>${cloud.sequence} <span class="muted">· ${cloud.model}</span></h2>
     <div class="muted">${isoDay(launch.date)} → ${isoDay(arrival.date)}</div>
@@ -140,25 +141,30 @@ function showDetail(id) {
       ${kpi(fmtCost(d.cost, cloud.cost_units), cloud.cost_label)}
       ${kpi(`${d.totals.tof_years.toFixed(1)} yr`, 'time of flight')}
       ${kpi(`${(arrival.vinf_ms / 1000).toFixed(2)} km/s`, `arrival speed at ${arrival.body} (v∞)`)}
-      ${kpi(`${(arrival.entry_speed_ms / 1000).toFixed(1)} km/s`, 'atmospheric entry speed')}
+      ${lt ? kpi(`${lt.final_mass_kg.toFixed(0)} kg`, `mass in ${arrival.body} orbit`)
+           : kpi(`${(arrival.entry_speed_ms / 1000).toFixed(1)} km/s`, 'atmospheric entry speed')}
       ${kpi(launch.c3_km2s2.toFixed(1), 'launch energy C3 (km²/s²)')}
     </div>`;
   const legRows = d.legs.map(leg => `<tr><td>${leg.from} → ${leg.to}</td>
       <td class="num">${leg.tof_days.toFixed(0)} d</td>
       <td class="num">${leg.dsm_ms != null ? leg.dsm_ms.toFixed(0) + ' m/s' : '—'}</td>
       <td>${isoDay(leg.arr_date)}</td></tr>`).join('');
-  const captureRow = arrival.capture_dv_ms != null
+  const captureRow = lt
+    ? `<tr><th>${arrival.body} low-thrust capture spiral to ${arrival.orbit_radius_km.toFixed(0)} km circular</th>
+         <td class="num" colspan="3">${arrival.capture_dv_ms.toFixed(0)} m/s over ${arrival.capture_spiral_days.toFixed(0)} d</td></tr>`
+    : arrival.capture_dv_ms != null
     ? `<tr><th>${arrival.body} capture burn</th><td class="num" colspan="3">${arrival.capture_dv_ms.toFixed(0)} m/s</td></tr>` : '';
   // Ballistic model: the assist cannot always bend the path enough; the leftover is a burn at the flyby.
   const mismatchRows = d.flybys.filter(f => f.mismatch_dv_ms != null).map(f =>
     `<tr><th>burn at ${f.body} flyby (assist shortfall)</th><td class="num" colspan="3">${f.mismatch_dv_ms.toFixed(0)} m/s</td></tr>`).join('');
   body.innerHTML = `
     <table class="mission">
-      <tr><th>leg</th><th>time of flight</th><th>deep-space maneuver</th><th>arrival date</th></tr>
+      <tr><th>leg</th><th>time of flight</th><th>${lt ? 'thrust Δv' : 'deep-space maneuver'}</th><th>arrival date</th></tr>
       ${legRows}
       ${mismatchRows}
       <tr><th>launch asymptote (right ascension / declination)</th>
-          <td class="num" colspan="3">${launch.rla_deg.toFixed(1)}° / ${launch.dla_deg.toFixed(1)}°</td></tr>
+          <td class="num" colspan="3">${launch.rla_deg == null ? '— (C3 = 0)'
+            : `${launch.rla_deg.toFixed(1)}° / ${launch.dla_deg.toFixed(1)}°`}</td></tr>
       ${captureRow}
     </table>
     <div class="exports">
@@ -223,7 +229,8 @@ function gmatSeed(d) {
     `% GMAT seed -- ${state.cloud.model} ${state.cloud.sequence}`,
     `% cost ${d.cost.toFixed(1)} ${state.cloud.cost_units}   TOF ${d.totals.tof_years.toFixed(2)} yr`,
     `% Launch ${launch.date}   C3 ${launch.c3_km2s2.toFixed(4)} km^2/s^2`,
-    `%   launch asymptote RA ${launch.rla_deg.toFixed(3)} deg   dec ${launch.dla_deg.toFixed(3)} deg`,
+    launch.rla_deg == null ? '%   launch asymptote: none (C3 = 0, Earth escape)'
+      : `%   launch asymptote RA ${launch.rla_deg.toFixed(3)} deg   dec ${launch.dla_deg.toFixed(3)} deg`,
     '% Heliocentric departure state, EME2000 (J2000), metres and m/s:',
     `%   X  = ${X.toFixed(3)}`, `%   Y  = ${Y.toFixed(3)}`, `%   Z  = ${Z.toFixed(3)}`,
     `%   VX = ${VX.toFixed(6)}`, `%   VY = ${VY.toFixed(6)}`, `%   VZ = ${VZ.toFixed(6)}`,
@@ -239,6 +246,11 @@ function gmatSeed(d) {
   d.flybys.forEach(f => { if (f.mismatch_dv_ms)
     lines.push(`%   flyby_${f.body.toLowerCase().padEnd(11)} dv = ${f.mismatch_dv_ms.toFixed(1)} m/s (assist shortfall at ${f.body})`); });
   if (arrival.capture_dv_ms) lines.push(`%   capture           dv = ${arrival.capture_dv_ms.toFixed(1)} m/s at ${arrival.body}`);
+  if (d.lowthrust) {
+    const sc = d.lowthrust.spacecraft;
+    lines.push(`% Low-thrust: ${sc.engine} ${sc.thrust_n} N @ ${sc.isp_s} s, wet ${sc.wet_mass_kg} kg; ` +
+               `each arc ends at a Sims-Flanagan impulse (full list in the JSON export, legs[].impulses)`);
+  }
   return lines.join('\n') + '\n';
 }
 

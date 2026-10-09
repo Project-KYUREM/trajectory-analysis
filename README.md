@@ -44,9 +44,105 @@ Both take `--sweep` (one search per synodic launch slice) and `--help`.
 | `capture`   | mga_1dsm + insertion into an e=0.99 ellipse | deep-space maneuvers + capture burn (m/s) |
 | `ballistic` | mga, gravity assists only, flyby arrival     | departure Δv beyond the launch allowance (m/s) |
 | `nep`       | mga_lt_nep, 40 kWe nuclear-electric          | builds and runs but is not decoded or published; the NEP path is "export a `ballistic`/`capture` GMAT seed and convert the impulses to finite burns in GMAT" |
+| `dfd`       | Sims-Flanagan MGA (`lowthrust.MgaLowThrust`), Direct Fusion Drive 10 N @ 10 000 s (2 MW), 20 t at Earth escape, continuous thrust + gravity assists, low-thrust spiral into a 10 R_N circular Neptune orbit | propellant, cruise + capture (kg); time axis includes the capture spiral |
+| `dfd-1mw`   | as `dfd` with the 1 MW engine, 5 N @ 10 000 s | as `dfd` |
 
-Sequences are strings over the body registry (`V E M J S N`), Earth first,
-destination last: `EVEEJN`, `EVEJN`, `EVJN`, `EVVEJN`, `EJN`, …
+Sequences are strings over the body registry (`V E M J S U N`), Earth first,
+destination last: `EVEEJN`, `EVEJN`, `EVJN`, `EVVEJN`, `EJN`, `EJUN`, `EN`, …
+
+## Low-thrust: Direct Fusion Drive to Neptune orbit (`dfd`)
+
+The same pipeline (archipelago → MBH polish → Pareto front → site) applied to a
+continuous-thrust spacecraft. Everything model-specific lives in
+`orbit_planning/lowthrust.py` (the problem, engine presets, capture model) and
+the `DFD_SPACECRAFT` block of `orbit_planning/models.py` (the vehicle).
+
+Mission model:
+
+- **Launch**: 20 000 kg delivered to Earth escape (C3 = 0, "20 t to TLI").
+  `launch_c3_km2s2 > 0` adds launch v∞ genes.
+- **Cruise**: Sims-Flanagan transcription (pykep `sims_flanagan.leg`),
+  `n_seg = 10` impulses per leg, each bounded by `thrust · dt / m`; constant
+  thrust at any solar distance (fusion, not solar power). Each leg's forward
+  and backward halves must meet: 7 match-point equality constraints per leg.
+- **Gravity assists**: unpowered and exact by construction (`pykep.fb_prop` with
+  periapsis-radius and plane-angle genes, periapsis ≥ the body's safe radius);
+  thrust on the legs on either side.
+- **Capture**: the final leg arrives with a free v∞ (a gene). The spiral to a
+  circular orbit of radius r costs `Δv = v∞ + sqrt(μ/r)` (shed v∞ far out, then
+  spiral from parabolic to circular; Edelbaum limit, an upper bound) and
+  takes `Δm · c / T`, which is added to the time objective. Target: 10 R_N
+  (~246 000 km, between Proteus and Triton), set in `mission.BODIES['N']['lowthrust_orbit']`.
+- **Cost**: propellant = 20 000 kg − mass in the final orbit; the final mass
+  must stay ≥ `min_final_mass_kg` (10 000 kg).
+
+Engine numbers (`lowthrust.ENGINES`) are published Princeton Satellite Systems
+/ PPPL DFD design estimates (~10 000 s, 5–10 N per MW), not flight data; put
+your engine's thrust, Isp and dry mass in `lowthrust.ENGINES` /
+`models.DFD_SPACECRAFT` and every result records them (`assumptions` in the
+result header).
+
+Search: the archipelago (SADE in `optimize.py`, NSGA-II in `pareto.py`)
+searches the problem with its constraints folded into a weighted penalty; the
+MBH polish then solves the *true* constrained problem with IPOPT
+(finite-difference gradients, unit-box scaling, `search.UnitBox`). Raw
+Sims-Flanagan individuals are rarely feasible, so the polished points are the
+result: give `--polish` generously, and use `--sweep`. On the penalised
+problem a single NSGA-II population collapses to a few near-identical
+trajectories, so the polish seeds (the least-penalised individual per
+cruise-time group, one per distinct launch day / cruise day) are only as
+diverse as the slices they come from. `models.PENALTY_WEIGHT` sets how hard
+the global stage is pushed towards feasibility. Every point carries `feasible` and
+`violation`; only feasible points can be on the front, and only feasible
+points are published. Expect only part of the polished seeds to close: in
+analytic-ephemeris tests 0–75 % per run (EJN 3 of 4; EN between 0 of 4 and
+1 of 2) from one small unswept population, whose individuals still sat at
+~0.5 non-dimensional match-point violation: the global stage only places
+the seeds, and the polish does the work. More seeds (`--polish`), more
+slices (`--sweep`) and more hops (`--polish-stop`) raise the yield. A polish of one point (MBH, 5 hops of up to 1000 IPOPT
+iterations) takes ~5–12 min for a 2-leg sequence, more for longer ones, so
+`--polish 32` on 8 cores is roughly 30–50 min per sequence on top of the
+search. `--polish-maxeval` and `--polish-stop` trade time for feasibility.
+
+```bash
+# one sequence, cheapest trajectory
+python orbit_planning/optimize.py --model dfd --sequence EJN
+
+# one sequence, propellant / flight-time front over every synodic launch slice
+python orbit_planning/pareto.py --model dfd --sequence EJN --sweep --polish 32
+```
+
+### Sweeping gravity-assist sequences
+
+`orbit_planning/sequence_sweep.py` runs one search per sequence of an array
+and ranks them. The array is `SEQUENCES` at the top of the file (a Python
+list, defaulting to `paths.DFD_SEQUENCES`), or pass it on the command line:
+
+```bash
+# the SEQUENCES list in the file
+python orbit_planning/sequence_sweep.py
+
+# an explicit array (space separated), swept launch windows, 32 polished points each
+python orbit_planning/sequence_sweep.py --model dfd \
+    --sequences EN EJN ESN EUN EJSN EJUN EVEJN EVEEJN --sweep --polish 32
+
+# cheapest-only per sequence (optimize.py) instead of the front
+python orbit_planning/sequence_sweep.py --mode champion --sequences EJN EJSN
+
+# re-rank existing results only, by the cheapest trajectory within 10 years
+python orbit_planning/sequence_sweep.py --summary-only --max-years 10
+```
+
+Each sequence runs in its own process; ones that already have a result of
+the same kind are skipped unless `--force`, so an interrupted sweep resumes.
+Unrecognised options (`--sweep`, `--islands`, `--pop`, `--gen`, `--rounds`,
+`--polish`, `--polish-maxeval`, `--seed`, …) go to the search script. The
+ranking (feasible-point count, cheapest propellant and its flight time and
+final mass, fastest feasible trajectory) is printed and written to
+`results/<model>/sequence_sweep.{csv,json}`. `batch.py --models dfd
+--sequences EJN,EJSN` does the same searches without the ranking, and
+`publish.py` puts the runs on the site like any other model (thrust arcs are
+drawn as the coasts between Sims-Flanagan impulses).
 
 ## Layout
 
@@ -54,12 +150,14 @@ destination last: `EVEEJN`, `EVEJN`, `EVJN`, `EVVEJN`, `EJN`, …
 |------|------|
 | `orbit_planning/paths.py`       | filesystem layout + default matrix (kernel-free) |
 | `orbit_planning/mission.py`     | SPICE kernels, body registry, sequences, launch-window slicing |
-| `orbit_planning/models.py`      | the models: build / decode / cost / objective, and `problem()` |
+| `orbit_planning/models.py`      | the models: build / decode / cost / objective, `problem()`, `evaluate()`; the DFD vehicle |
+| `orbit_planning/lowthrust.py`   | Sims-Flanagan gravity-assist problem, DFD engine presets, low-thrust capture model |
 | `orbit_planning/search.py`      | archipelago, MBH polish, parallel polish pool, shared CLI |
 | `orbit_planning/optimize.py`    | single-objective search (+ `--sweep`) |
 | `orbit_planning/pareto.py`      | NSGA-II front (+ `--sweep`, `--polish`) |
 | `orbit_planning/trajectory.py`  | decision vector → mission description with arc states |
 | `orbit_planning/batch.py`       | run many pairs, resumable |
+| `orbit_planning/sequence_sweep.py` | run an array of sequences for one model and rank them |
 | `orbit_planning/publish.py`     | raw results → `docs/data/` |
 | `orbit_planning/porkchop.py`    | static PNG of one run's cloud |
 | `orbit_planning/slingshot_planning.py` | notebook for poking at one champion |
