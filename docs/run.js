@@ -167,6 +167,9 @@ function showDetail(id) {
             : `${launch.rla_deg.toFixed(1)}° / ${launch.dla_deg.toFixed(1)}°`}</td></tr>
       ${captureRow}
     </table>
+    ${lt ? `<p class="muted">The 3D path is coloured by engine throttle, from coasting to full
+      ${lt.spacecraft.thrust_n} N (colour bar); hover it for the date and level. The capture spiral at
+      ${arrival.body} is not drawn (it is planetocentric).</p>` : ''}
     <div class="exports">
       <button id="expCsv">state vectors (CSV)</button>
       <button id="expGmat">GMAT seed</button>
@@ -195,10 +198,33 @@ function draw3d(d) {
     type: 'scatter3d', mode: 'lines', ...toAU(state.planets[label].xyz),
     line: { color: t.grid, width: 2 }, name: label, hoverinfo: 'name',
   }));
-  d.arcs.forEach(arc => traces.push({
-    type: 'scatter3d', mode: 'lines', ...toAU(sampleArc(arc, 80)),
-    line: { color: t.accent, width: 4 }, showlegend: false, hoverinfo: 'skip',
-  }));
+  const throttleAt = d.lowthrust ? throttleLookup(d) : null;
+  d.arcs.forEach((arc, i) => {
+    const n = 80;
+    const trace = { type: 'scatter3d', mode: 'lines', ...toAU(sampleArc(arc, n)), showlegend: false };
+    if (!throttleAt) {
+      traces.push({ ...trace, line: { color: t.accent, width: 4 }, hoverinfo: 'skip' });
+      return;
+    }
+    // Low-thrust: colour each sample by the engine throttle of the
+    // Sims-Flanagan segment it falls in (one blue ramp, pale = coasting).
+    const level = Array.from({ length: n + 1 }, (_, k) =>
+      throttleAt(arc.epoch_mjd2000 + arc.dt_days * k / n));
+    traces.push({
+      ...trace,
+      line: {
+        width: 5, color: level, cmin: 0, cmax: 1,
+        colorscale: [[0, t.thrust[0]], [0.5, t.thrust[1]], [1, t.thrust[2]]],
+        showscale: i === 0,
+        colorbar: { title: { text: 'thrust', side: 'right', font: { color: t.ink2 } },
+                    tickvals: [0, 0.5, 1], ticktext: ['coast', '50 %', 'full'],
+                    thickness: 12, len: 0.6, tickfont: { color: t.ink2 } },
+      },
+      text: level.map((v, k) => `${isoDay(mjd2000ToDate(arc.epoch_mjd2000 + arc.dt_days * k / n))}` +
+                                `<br>thrust ${(100 * v).toFixed(0)} %`),
+      hoverinfo: 'text',
+    });
+  });
   traces.push({ type: 'scatter3d', mode: 'markers', x: [0], y: [0], z: [0],
                 marker: { color: '#eda100', size: 4 }, name: 'Sun', hoverinfo: 'name' });
   const axis = title => ({ title, gridcolor: t.grid, color: t.ink2, showbackground: false });
@@ -208,6 +234,22 @@ function draw3d(d) {
     scene: { xaxis: axis('X (AU)'), yaxis: axis('Y (AU)'), zaxis: axis('Z (AU)'),
              aspectmode: 'data', bgcolor: t.surface },
   }, { displayModeBar: false, responsive: true });
+}
+
+// Throttle (fraction of full thrust, 0..1) at an MJD2000 epoch of a low-thrust
+// trajectory: Sims-Flanagan segment j of a leg spans its impulse epoch +- dt/2.
+function throttleLookup(d) {
+  const segments = [];
+  d.legs.forEach(leg => {
+    const impulses = leg.impulses || [];
+    const half = leg.tof_days / impulses.length / 2;
+    impulses.forEach(p => segments.push([p.epoch_mjd2000 - half, p.epoch_mjd2000 + half,
+                                         Math.min(p.throttle ?? 0, 1)]));
+  });
+  return epoch => {
+    const seg = segments.find(([lo, hi]) => epoch >= lo && epoch <= hi);
+    return seg ? seg[2] : 0;
+  };
 }
 
 // --- exports (the site owns these; states arrive in ECLIPJ2000 and are rotated here) ---

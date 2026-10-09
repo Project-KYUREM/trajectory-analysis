@@ -18,6 +18,8 @@ Examples::
     # only re-rank what is already under results/ (no search)
     python orbit_planning/sequence_sweep.py --summary-only --max-years 10
 
+    # many sequences in parallel on a big machine: scripts/run_dfd_sweep.sh
+
 Options this script does not recognise (``--sweep``, ``--islands``,
 ``--polish``, ``--polish-maxeval``, ...) are forwarded to the search script.
 """
@@ -138,7 +140,16 @@ def main():
                         help='skip the searches and only rank existing results')
     parser.add_argument('--max-years', type=float, default=None, dest='max_years',
                         help='rank by the cheapest point within this total flight time')
+    parser.add_argument('--build-tables', action='store_true', dest='build_tables',
+                        help='only build (or load) the model\'s cached capture table, then exit; '
+                             'run this once before launching searches in parallel')
     args, forwarded = parser.parse_known_args()
+
+    if args.build_tables:
+        import models   # loads SPICE; the rest of this script does not need it
+        models.build(args.model, 'EN')
+        print(f"capture table for {args.model} ready under {paths.RESULTS_DIR / 'cache'}")
+        return
 
     sequences = [s.strip().upper() for s in args.sequences if s.strip()]
     script, filename = SCRIPTS[args.mode]

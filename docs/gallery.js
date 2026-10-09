@@ -1,4 +1,9 @@
-// Index page: one card per published (model, sequence) run, grouped by sequence.
+// Index page: one card per published (model, sequence) run, grouped by sequence,
+// with one column per model in a fixed order so models line up across rows.
+
+// Known models first, in this order; anything else follows alphabetically.
+const MODEL_ORDER = ['capture', 'ballistic', 'dfd', 'dfd-1mw', 'nep'];
+const modelRank = m => (MODEL_ORDER.includes(m) ? MODEL_ORDER.indexOf(m) : MODEL_ORDER.length);
 
 loadJSON('data/index.json').then(runs => {
   const gallery = document.getElementById('gallery');
@@ -11,7 +16,20 @@ loadJSON('data/index.json').then(runs => {
   // Simpler sequences (fewer flybys) first, then alphabetical.
   const order = Object.keys(bySequence).sort((a, b) => a.length - b.length || a.localeCompare(b));
 
+  const models = [...new Set(runs.map(run => run.model))]
+    .sort((a, b) => modelRank(a) - modelRank(b) || a.localeCompare(b));
+  gallery.style.setProperty('--cols', models.length);
+
   gallery.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'grid colhead';
+  models.forEach(model => {
+    const cell = document.createElement('div');
+    cell.innerHTML = `<b>${model}</b> · ${runs.find(run => run.model === model).cost_label}`;
+    head.appendChild(cell);
+  });
+  gallery.appendChild(head);
+
   order.forEach(sequence => {
     const label = document.createElement('div');
     label.className = 'section-label';
@@ -20,7 +38,15 @@ loadJSON('data/index.json').then(runs => {
 
     const grid = document.createElement('div');
     grid.className = 'grid';
-    bySequence[sequence].forEach(run => {
+    models.forEach(model => {
+      const run = bySequence[sequence].find(r => r.model === model);
+      if (!run) {
+        const empty = document.createElement('div');
+        empty.className = 'card empty';
+        empty.textContent = `no ${model} run for ${sequence}`;
+        grid.appendChild(empty);
+        return;
+      }
       const card = document.createElement('a');
       card.className = 'card';
       card.href = `sequence.html?model=${run.model}&seq=${run.sequence}`;

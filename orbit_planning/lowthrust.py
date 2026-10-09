@@ -463,9 +463,12 @@ def capture_table(sc, mu, body_radius_m, cache_dir=None, workers=None, log=print
     table = CaptureTable(np.array(vinf[:rows]), np.array(mass), dv[:rows], days[:rows],
                          eta_used[:rows], key)
     if path is not None:
+        # write then rename, so a concurrent reader never sees a partial file
         path.parent.mkdir(parents=True, exist_ok=True)
-        np.savez(path, vinf_kms=table.vinf_kms, mass_kg=table.mass_kg, dv_ms=table.dv_ms,
+        tmp = path.with_name(f'{path.stem}.{os.getpid()}.tmp.npz')
+        np.savez(tmp, vinf_kms=table.vinf_kms, mass_kg=table.mass_kg, dv_ms=table.dv_ms,
                  days=table.days, eta_used=table.eta_used)
+        os.replace(tmp, path)
     _TABLES[key] = table
     return table
 
@@ -731,7 +734,8 @@ class MgaLowThrust:
             list[dict]: One entry per leg with ``arcs`` (``epoch_mjd2000``,
             ``dt_days``, ``r``, ``v`` at the arc start; ``n_seg + 1`` arcs),
             ``impulses`` (``epoch_mjd2000``, ``dv`` vector in m/s, ``mass_kg``
-            before the impulse), ``dv_ms`` (sum of the impulse magnitudes),
+            before the impulse, ``throttle`` as a fraction of full thrust over
+            the segment), ``dv_ms`` (sum of the impulse magnitudes),
             ``mismatch`` (pykep's 7 residuals, SI units) and ``end_miss_m``.
         """
         L, sc = self.layout, self.sc
@@ -785,7 +789,8 @@ class MgaLowThrust:
             r, _ = prop(r, v, (t_end - t_now) * pk.DAY2SEC)
             out.append(dict(
                 arcs=arcs,
-                impulses=[dict(epoch_mjd2000=mid[j], dv=dvs[j], mass_kg=masses[j]) for j in range(n)],
+                impulses=[dict(epoch_mjd2000=mid[j], dv=dvs[j], mass_kg=masses[j],
+                               throttle=float(np.linalg.norm(thr[j]))) for j in range(n)],
                 dv_ms=float(sum(np.linalg.norm(d) for d in dvs)),
                 mismatch=mismatch,
                 end_miss_m=float(np.linalg.norm(r - b['end'][i][0]))))

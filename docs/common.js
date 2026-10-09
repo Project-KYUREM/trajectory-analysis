@@ -8,6 +8,7 @@ const cssVar = name => getComputedStyle(document.documentElement).getPropertyVal
 const theme = () => ({
   surface: cssVar('--surface'), ink: cssVar('--ink'), ink2: cssVar('--ink-2'),
   grid: cssVar('--grid'), accent: cssVar('--accent'), accent2: cssVar('--accent-2'),
+  thrust: [cssVar('--thrust-lo'), cssVar('--thrust-mid'), cssVar('--thrust-hi')],
 });
 
 // One formatting policy for the cost axis, whatever its units.

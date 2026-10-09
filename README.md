@@ -155,6 +155,22 @@ python orbit_planning/sequence_sweep.py --mode champion --sequences EJN EJSN
 python orbit_planning/sequence_sweep.py --summary-only --max-years 10
 ```
 
+On a many-core machine, `scripts/run_dfd_sweep.sh` runs the 77 Earth →
+Neptune swing-by sequences (at most 5 assists; only Venus, up to 3×, and
+Earth, up to 2×, back to back) as a bash array, `JOBS` sequences at once
+with `WORKERS` processes each (default 16 × 8 = 128 cores), longest
+sequences first, one log per sequence in `results/<model>/logs/`. It builds
+the capture table once up front, skips finished sequences (so it resumes),
+and ends with the ranking. Settings are environment variables:
+
+```bash
+scripts/run_dfd_sweep.sh                         # all 77, dfd, 16 x 8
+JOBS=32 WORKERS=4 POLISH=16 scripts/run_dfd_sweep.sh
+MODELS="dfd dfd-1mw" SEQUENCES="EJN EVEJN" scripts/run_dfd_sweep.sh
+DRY_RUN=1 scripts/run_dfd_sweep.sh               # print the commands only
+EXTRA="--polish-maxeval 1500" scripts/run_dfd_sweep.sh   # any other pareto.py option
+```
+
 Each sequence runs in its own process; ones that already have a result of
 the same kind are skipped unless `--force`, so an interrupted sweep resumes.
 Unrecognised options (`--sweep`, `--islands`, `--pop`, `--gen`, `--rounds`,
@@ -180,6 +196,7 @@ drawn as the coasts between Sims-Flanagan impulses).
 | `orbit_planning/trajectory.py`  | decision vector → mission description with arc states |
 | `orbit_planning/batch.py`       | run many pairs, resumable |
 | `orbit_planning/sequence_sweep.py` | run an array of sequences for one model and rank them |
+| `scripts/run_dfd_sweep.sh` | the 77-sequence DFD sweep, many sequences in parallel on one machine |
 | `orbit_planning/publish.py`     | raw results → `docs/data/` |
 | `orbit_planning/porkchop.py`    | static PNG of one run's cloud |
 | `orbit_planning/slingshot_planning.py` | notebook for poking at one champion |

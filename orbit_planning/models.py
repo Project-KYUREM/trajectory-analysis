@@ -413,7 +413,8 @@ def _decode_dfd(udp, x):
             max_ineq_violation=float(max(0.0, np.max(ineq))) if len(ineq) else 0.0,
             leg_end_miss_km=[s['end_miss_m'] / 1e3 for s in segs],
             impulses=[[dict(epoch_mjd2000=p['epoch_mjd2000'], dv_ms=p['dv'].tolist(),
-                            mass_kg=p['mass_kg']) for p in s['impulses']] for s in segs]),
+                            mass_kg=p['mass_kg'], throttle=p['throttle'])
+                       for p in s['impulses']] for s in segs]),
     )
 
 
