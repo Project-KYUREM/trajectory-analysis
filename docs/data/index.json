@@ -242,6 +242,27 @@
   },
   {
     "model": "capture",
+    "sequence": "EVVVEEN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Venus",
+      "Venus",
+      "Earth",
+      "Earth",
+      "Neptune"
+    ],
+    "cost_label": "Delta-V \u2014 deep-space maneuvers + capture",
+    "cost_units": "m/s",
+    "n_points": 16824,
+    "n_front": 130,
+    "n_detail": 160,
+    "best_cost": 11544.536353977608,
+    "best_tof_years": 26.683084471495906,
+    "path": "data/capture/EVVVEEN/cloud.json"
+  },
+  {
+    "model": "capture",
     "sequence": "EVVVEMN",
     "labels": [
       "Earth",
@@ -281,6 +302,48 @@
     "best_cost": 9690.099306877328,
     "best_tof_years": 28.03283135694963,
     "path": "data/capture/EVVVESN/cloud.json"
+  },
+  {
+    "model": "capture",
+    "sequence": "EVVVJSN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Venus",
+      "Venus",
+      "Jupiter",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Delta-V \u2014 deep-space maneuvers + capture",
+    "cost_units": "m/s",
+    "n_points": 16824,
+    "n_front": 49,
+    "n_detail": 87,
+    "best_cost": 7377.424241522867,
+    "best_tof_years": 31.422061702817775,
+    "path": "data/capture/EVVVJSN/cloud.json"
+  },
+  {
+    "model": "capture",
+    "sequence": "EVVVMSN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Venus",
+      "Venus",
+      "Mars",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Delta-V \u2014 deep-space maneuvers + capture",
+    "cost_units": "m/s",
+    "n_points": 16824,
+    "n_front": 21,
+    "n_detail": 53,
+    "best_cost": 13120.805134871202,
+    "best_tof_years": 15.331146805055594,
+    "path": "data/capture/EVVVMSN/cloud.json"
   },
   {
     "model": "dfd",
