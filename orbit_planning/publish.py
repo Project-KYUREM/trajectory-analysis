@@ -3,8 +3,9 @@
 Each run becomes ``docs/data/<model>/<sequence>/cloud.json``: every point of
 the cloud, a ``trajectory.describe()`` for each point flagged ``detail``, and
 the ECLIPJ2000 to EME2000 rotation. ``planets.json`` (orbit polylines shared
-by all runs) and ``index.json`` (the gallery manifest) are written alongside,
-then ``fronts.py`` builds each model's combined front (``fronts.json``).
+by all runs) and ``index.json`` (the gallery manifest) are written alongside
+(runs published earlier stay listed unless ``--replace-index``), then
+``fronts.py`` builds each model's combined front (``fronts.json``).
 Floats are rounded to a per-key precision.
 """
 import argparse
@@ -173,12 +174,43 @@ def publish_run(model_name, sequence):
                 path=f"data/{model_name}/{sequence}/cloud.json")
 
 
+def merge_index(new_entries, replace=False):
+    """Combine this publish's runs with the runs already in ``index.json``.
+
+    Publishing from a machine that holds only some of the raw results (a
+    cluster running one sweep) must not drop runs published earlier from
+    elsewhere: their ``cloud.json`` files are still in ``docs/data``.
+
+    Args:
+        new_entries (list[dict]): Index entries published in this call.
+        replace (bool, optional): Drop every earlier entry instead (the index
+            then lists only this call's runs). Defaults to False.
+
+    Returns:
+        tuple[list[dict], int]: The merged index, sorted by model then
+        sequence, and how many earlier entries were kept.
+    """
+    merged = {(e['model'], e['sequence']): e for e in new_entries}
+    kept = 0
+    index_path = paths.DOCS_DATA_DIR / 'index.json'
+    if not replace and index_path.is_file():
+        for old in json.loads(index_path.read_text()):
+            key = (old['model'], old['sequence'])
+            if key not in merged and (paths.DOCS_DIR / old['path']).is_file():
+                merged[key] = old
+                kept += 1
+    return [merged[k] for k in sorted(merged)], kept
+
+
 def main():
     """Publish every discovered run, optionally filtered, and the shared manifests."""
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--models', default=None, help='comma list; default: every run found')
     parser.add_argument('--sequences', default=None, help='comma list; default: every run found')
+    parser.add_argument('--replace-index', action='store_true', dest='replace_index',
+                        help='list only the runs published now; by default earlier published '
+                             'runs whose cloud.json is still in docs/data stay on the site')
     args = parser.parse_args()
 
     runs = discover_runs(paths.csv_list(args.models) if args.models else None,
@@ -187,23 +219,25 @@ def main():
         print(f"no results under {paths.RESULTS_DIR}; run batch.py or pareto.py first")
         return
 
-    index = []
+    published = []
     for model_name, sequence in runs:
         try:
             entry = publish_run(model_name, sequence)
         except ValueError as exc:
             print(f"skip {model_name}/{sequence}: {exc}; re-run pareto.py for it")
             continue
-        index.append(entry)
+        published.append(entry)
         print(f"published {model_name}/{sequence}: {entry['n_points']} pts, {entry['n_front']} front, "
               f"{entry['n_detail']} detailed, best {entry['best_cost']:.0f} {entry['cost_units']}")
 
     paths.DOCS_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    index, kept = merge_index(published, replace=args.replace_index)
     labels = {label for entry in index for label in entry['labels']}
     (paths.DOCS_DATA_DIR / 'planets.json').write_text(
         json.dumps(compact(planet_orbits(labels)), separators=(',', ':')))
     (paths.DOCS_DATA_DIR / 'index.json').write_text(json.dumps(index, indent=2))
-    print(f"\nwrote index.json ({len(index)} runs) and planets.json ({len(labels)} bodies)")
+    print(f"\nwrote index.json ({len(index)} runs: {len(published)} published now, {kept} kept from "
+          f"earlier publishes) and planets.json ({len(labels)} bodies)")
     fronts.build_all()   # docs/data/<model>/fronts.json: the "Best by trip time" tab
 
 
