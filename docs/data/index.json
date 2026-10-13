@@ -1,222 +1,498 @@
 [
   {
-    "model": "ballistic",
+    "model": "capture",
+    "sequence": "EEEMJSN",
+    "labels": [
+      "Earth",
+      "Earth",
+      "Earth",
+      "Mars",
+      "Jupiter",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Delta-V \u2014 deep-space maneuvers + capture",
+    "cost_units": "m/s",
+    "n_points": 13624,
+    "n_front": 150,
+    "n_detail": 182,
+    "best_cost": 9804.572008442421,
+    "best_tof_years": 32.25400993548104,
+    "path": "data/capture/EEEMJSN/cloud.json"
+  },
+  {
+    "model": "capture",
+    "sequence": "EVVVEMN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Venus",
+      "Venus",
+      "Earth",
+      "Mars",
+      "Neptune"
+    ],
+    "cost_label": "Delta-V \u2014 deep-space maneuvers + capture",
+    "cost_units": "m/s",
+    "n_points": 16824,
+    "n_front": 108,
+    "n_detail": 138,
+    "best_cost": 11773.481283707442,
+    "best_tof_years": 21.73284443507551,
+    "path": "data/capture/EVVVEMN/cloud.json"
+  },
+  {
+    "model": "capture",
+    "sequence": "EVVVESN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Venus",
+      "Venus",
+      "Earth",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Delta-V \u2014 deep-space maneuvers + capture",
+    "cost_units": "m/s",
+    "n_points": 16824,
+    "n_front": 102,
+    "n_detail": 133,
+    "best_cost": 9690.099306877328,
+    "best_tof_years": 28.03283135694963,
+    "path": "data/capture/EVVVESN/cloud.json"
+  },
+  {
+    "model": "dfd",
+    "sequence": "EEESN",
+    "labels": [
+      "Earth",
+      "Earth",
+      "Earth",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 5,
+    "n_front": 3,
+    "n_detail": 5,
+    "best_cost": 5896.667039416263,
+    "best_tof_years": 11.597985986659419,
+    "path": "data/dfd/EEESN/cloud.json"
+  },
+  {
+    "model": "dfd",
+    "sequence": "EESN",
+    "labels": [
+      "Earth",
+      "Earth",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 8,
+    "n_front": 5,
+    "n_detail": 8,
+    "best_cost": 5821.190201872047,
+    "best_tof_years": 15.102025074809728,
+    "path": "data/dfd/EESN/cloud.json"
+  },
+  {
+    "model": "dfd",
+    "sequence": "EJSN",
+    "labels": [
+      "Earth",
+      "Jupiter",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 10,
+    "n_front": 3,
+    "n_detail": 10,
+    "best_cost": 5963.909903166039,
+    "best_tof_years": 15.928890212970536,
+    "path": "data/dfd/EJSN/cloud.json"
+  },
+  {
+    "model": "dfd",
+    "sequence": "EMJSN",
+    "labels": [
+      "Earth",
+      "Mars",
+      "Jupiter",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 7,
+    "n_front": 1,
+    "n_detail": 7,
+    "best_cost": 5240.099651133178,
+    "best_tof_years": 11.209523035883436,
+    "path": "data/dfd/EMJSN/cloud.json"
+  },
+  {
+    "model": "dfd",
+    "sequence": "EVEMJSN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Earth",
+      "Mars",
+      "Jupiter",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 5,
+    "n_front": 2,
+    "n_detail": 5,
+    "best_cost": 8193.523342036005,
+    "best_tof_years": 13.055301126579641,
+    "path": "data/dfd/EVEMJSN/cloud.json"
+  },
+  {
+    "model": "dfd",
+    "sequence": "EVVEESN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Venus",
+      "Earth",
+      "Earth",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 5,
+    "n_front": 4,
+    "n_detail": 5,
+    "best_cost": 8680.550031357989,
+    "best_tof_years": 15.461899556694735,
+    "path": "data/dfd/EVVEESN/cloud.json"
+  },
+  {
+    "model": "dfd",
+    "sequence": "EVVEJSN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Venus",
+      "Earth",
+      "Jupiter",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 6,
+    "n_front": 2,
+    "n_detail": 6,
+    "best_cost": 7290.202797239308,
+    "best_tof_years": 13.427197078398825,
+    "path": "data/dfd/EVVEJSN/cloud.json"
+  },
+  {
+    "model": "dfd",
+    "sequence": "EVVN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Venus",
+      "Neptune"
+    ],
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 1,
+    "n_front": 1,
+    "n_detail": 1,
+    "best_cost": 6801.520225947284,
+    "best_tof_years": 11.162739147824004,
+    "path": "data/dfd/EVVN/cloud.json"
+  },
+  {
+    "model": "dfd-1mw",
+    "sequence": "EEEN",
+    "labels": [
+      "Earth",
+      "Earth",
+      "Earth",
+      "Neptune"
+    ],
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 2,
+    "n_front": 2,
+    "n_detail": 2,
+    "best_cost": 5160.473073136132,
+    "best_tof_years": 15.537067256249152,
+    "path": "data/dfd-1mw/EEEN/cloud.json"
+  },
+  {
+    "model": "dfd-1mw",
     "sequence": "EJN",
     "labels": [
       "Earth",
       "Jupiter",
       "Neptune"
     ],
-    "cost_label": "Departure Delta-V (launch energy)",
-    "cost_units": "m/s",
-    "n_points": 60024,
-    "n_front": 1096,
-    "n_detail": 1124,
-    "best_cost": 6843.9587442842585,
-    "best_tof_years": 32.85450013636857,
-    "path": "data/ballistic/EJN/cloud.json"
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 2,
+    "n_front": 2,
+    "n_detail": 2,
+    "best_cost": 8792.746504320176,
+    "best_tof_years": 14.38758578680106,
+    "path": "data/dfd-1mw/EJN/cloud.json"
   },
   {
-    "model": "ballistic",
-    "sequence": "EN",
-    "labels": [
-      "Earth",
-      "Neptune"
-    ],
-    "cost_label": "Departure Delta-V (launch energy)",
-    "cost_units": "m/s",
-    "n_points": 66024,
-    "n_front": 2933,
-    "n_detail": 2965,
-    "best_cost": 10821.581286441498,
-    "best_tof_years": 30.455736714720334,
-    "path": "data/ballistic/EN/cloud.json"
-  },
-  {
-    "model": "ballistic",
-    "sequence": "EVEEJN",
-    "labels": [
-      "Earth",
-      "Venus",
-      "Earth",
-      "Earth",
-      "Jupiter",
-      "Neptune"
-    ],
-    "cost_label": "Departure Delta-V (launch energy)",
-    "cost_units": "m/s",
-    "n_points": 42024,
-    "n_front": 295,
-    "n_detail": 325,
-    "best_cost": 7685.216703783293,
-    "best_tof_years": 25.41396370923659,
-    "path": "data/ballistic/EVEEJN/cloud.json"
-  },
-  {
-    "model": "ballistic",
-    "sequence": "EVEJN",
-    "labels": [
-      "Earth",
-      "Venus",
-      "Earth",
-      "Jupiter",
-      "Neptune"
-    ],
-    "cost_label": "Departure Delta-V (launch energy)",
-    "cost_units": "m/s",
-    "n_points": 42024,
-    "n_front": 512,
-    "n_detail": 541,
-    "best_cost": 5266.071514353085,
-    "best_tof_years": 33.53520009458255,
-    "path": "data/ballistic/EVEJN/cloud.json"
-  },
-  {
-    "model": "ballistic",
-    "sequence": "EVJN",
-    "labels": [
-      "Earth",
-      "Venus",
-      "Jupiter",
-      "Neptune"
-    ],
-    "cost_label": "Departure Delta-V (launch energy)",
-    "cost_units": "m/s",
-    "n_points": 42024,
-    "n_front": 673,
-    "n_detail": 702,
-    "best_cost": 7606.901315012541,
-    "best_tof_years": 33.52462100129978,
-    "path": "data/ballistic/EVJN/cloud.json"
-  },
-  {
-    "model": "ballistic",
-    "sequence": "EVVEJN",
-    "labels": [
-      "Earth",
-      "Venus",
-      "Venus",
-      "Earth",
-      "Jupiter",
-      "Neptune"
-    ],
-    "cost_label": "Departure Delta-V (launch energy)",
-    "cost_units": "m/s",
-    "n_points": 42024,
-    "n_front": 251,
-    "n_detail": 281,
-    "best_cost": 6030.019084681799,
-    "best_tof_years": 26.24964861123424,
-    "path": "data/ballistic/EVVEJN/cloud.json"
-  },
-  {
-    "model": "capture",
-    "sequence": "EJN",
+    "model": "dfd-1mw",
+    "sequence": "EJSN",
     "labels": [
       "Earth",
       "Jupiter",
+      "Saturn",
       "Neptune"
     ],
-    "cost_label": "Delta-V \u2014 deep-space maneuvers + capture",
-    "cost_units": "m/s",
-    "n_points": 60024,
-    "n_front": 719,
-    "n_detail": 753,
-    "best_cost": 4253.680486548161,
-    "best_tof_years": 27.745845880482772,
-    "path": "data/capture/EJN/cloud.json"
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 4,
+    "n_front": 3,
+    "n_detail": 4,
+    "best_cost": 5020.758995046452,
+    "best_tof_years": 14.860934144425297,
+    "path": "data/dfd-1mw/EJSN/cloud.json"
   },
   {
-    "model": "capture",
-    "sequence": "EN",
+    "model": "dfd-1mw",
+    "sequence": "ESN",
     "labels": [
       "Earth",
+      "Saturn",
       "Neptune"
     ],
-    "cost_label": "Delta-V \u2014 deep-space maneuvers + capture",
-    "cost_units": "m/s",
-    "n_points": 66024,
-    "n_front": 2162,
-    "n_detail": 2193,
-    "best_cost": 7206.987028139173,
-    "best_tof_years": 30.564423234637637,
-    "path": "data/capture/EN/cloud.json"
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 2,
+    "n_front": 2,
+    "n_detail": 2,
+    "best_cost": 6393.700181526681,
+    "best_tof_years": 12.894901329817799,
+    "path": "data/dfd-1mw/ESN/cloud.json"
   },
   {
-    "model": "capture",
-    "sequence": "EVEEJN",
+    "model": "dfd-1mw",
+    "sequence": "EVEESN",
     "labels": [
       "Earth",
       "Venus",
       "Earth",
       "Earth",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 2,
+    "n_front": 2,
+    "n_detail": 2,
+    "best_cost": 7342.07418852786,
+    "best_tof_years": 16.6672810360134,
+    "path": "data/dfd-1mw/EVEESN/cloud.json"
+  },
+  {
+    "model": "dfd-1mw",
+    "sequence": "EVEMJSN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Earth",
+      "Mars",
+      "Jupiter",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 1,
+    "n_front": 1,
+    "n_detail": 1,
+    "best_cost": 6687.474057265141,
+    "best_tof_years": 16.673616857391544,
+    "path": "data/dfd-1mw/EVEMJSN/cloud.json"
+  },
+  {
+    "model": "dfd-1mw",
+    "sequence": "EVMJSN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Mars",
+      "Jupiter",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 7,
+    "n_front": 2,
+    "n_detail": 7,
+    "best_cost": 7178.170319109322,
+    "best_tof_years": 14.669740823411603,
+    "path": "data/dfd-1mw/EVMJSN/cloud.json"
+  },
+  {
+    "model": "dfd-1mw",
+    "sequence": "EVVEEMN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Venus",
+      "Earth",
+      "Earth",
+      "Mars",
+      "Neptune"
+    ],
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 1,
+    "n_front": 1,
+    "n_detail": 1,
+    "best_cost": 9997.471672277336,
+    "best_tof_years": 11.968169915184461,
+    "path": "data/dfd-1mw/EVVEEMN/cloud.json"
+  },
+  {
+    "model": "dfd-1mw",
+    "sequence": "EVVEESN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Venus",
+      "Earth",
+      "Earth",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 1,
+    "n_front": 1,
+    "n_detail": 1,
+    "best_cost": 9744.846406909794,
+    "best_tof_years": 15.595214220886202,
+    "path": "data/dfd-1mw/EVVEESN/cloud.json"
+  },
+  {
+    "model": "dfd-1mw",
+    "sequence": "EVVEMJN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Venus",
+      "Earth",
+      "Mars",
       "Jupiter",
       "Neptune"
     ],
-    "cost_label": "Delta-V \u2014 deep-space maneuvers + capture",
-    "cost_units": "m/s",
-    "n_points": 42024,
-    "n_front": 179,
-    "n_detail": 211,
-    "best_cost": 6202.259145133381,
-    "best_tof_years": 24.819873177926485,
-    "path": "data/capture/EVEEJN/cloud.json"
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 1,
+    "n_front": 1,
+    "n_detail": 1,
+    "best_cost": 9678.661472278412,
+    "best_tof_years": 14.111657641104436,
+    "path": "data/dfd-1mw/EVVEMJN/cloud.json"
   },
   {
-    "model": "capture",
-    "sequence": "EVEJN",
-    "labels": [
-      "Earth",
-      "Venus",
-      "Earth",
-      "Jupiter",
-      "Neptune"
-    ],
-    "cost_label": "Delta-V \u2014 deep-space maneuvers + capture",
-    "cost_units": "m/s",
-    "n_points": 42024,
-    "n_front": 70,
-    "n_detail": 98,
-    "best_cost": 6317.4841644317,
-    "best_tof_years": 26.291540240395157,
-    "path": "data/capture/EVEJN/cloud.json"
-  },
-  {
-    "model": "capture",
-    "sequence": "EVJN",
-    "labels": [
-      "Earth",
-      "Venus",
-      "Jupiter",
-      "Neptune"
-    ],
-    "cost_label": "Delta-V \u2014 deep-space maneuvers + capture",
-    "cost_units": "m/s",
-    "n_points": 42024,
-    "n_front": 327,
-    "n_detail": 364,
-    "best_cost": 3729.9741684003734,
-    "best_tof_years": 24.587313441026964,
-    "path": "data/capture/EVJN/cloud.json"
-  },
-  {
-    "model": "capture",
-    "sequence": "EVVEJN",
+    "model": "dfd-1mw",
+    "sequence": "EVVMJSN",
     "labels": [
       "Earth",
       "Venus",
       "Venus",
+      "Mars",
+      "Jupiter",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 1,
+    "n_front": 1,
+    "n_detail": 1,
+    "best_cost": 9951.726723185891,
+    "best_tof_years": 13.108388917865177,
+    "path": "data/dfd-1mw/EVVMJSN/cloud.json"
+  },
+  {
+    "model": "dfd-1mw",
+    "sequence": "EVVVESN",
+    "labels": [
       "Earth",
+      "Venus",
+      "Venus",
+      "Venus",
+      "Earth",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 1,
+    "n_front": 1,
+    "n_detail": 1,
+    "best_cost": 8878.637034806425,
+    "best_tof_years": 16.339416369561725,
+    "path": "data/dfd-1mw/EVVVESN/cloud.json"
+  },
+  {
+    "model": "dfd-1mw",
+    "sequence": "EVVVJSN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Venus",
+      "Venus",
+      "Jupiter",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 3,
+    "n_front": 2,
+    "n_detail": 3,
+    "best_cost": 7139.278809094496,
+    "best_tof_years": 15.858616374200489,
+    "path": "data/dfd-1mw/EVVVJSN/cloud.json"
+  },
+  {
+    "model": "dfd-1mw",
+    "sequence": "EVVVMJN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Venus",
+      "Venus",
+      "Mars",
       "Jupiter",
       "Neptune"
     ],
-    "cost_label": "Delta-V \u2014 deep-space maneuvers + capture",
-    "cost_units": "m/s",
-    "n_points": 42024,
-    "n_front": 208,
-    "n_detail": 244,
-    "best_cost": 6329.645353570769,
-    "best_tof_years": 27.641172593662098,
-    "path": "data/capture/EVVEJN/cloud.json"
+    "cost_label": "Propellant \u2014 cruise + low-thrust capture",
+    "cost_units": "kg",
+    "n_points": 1,
+    "n_front": 1,
+    "n_detail": 1,
+    "best_cost": 9705.255506385629,
+    "best_tof_years": 16.309759441844534,
+    "path": "data/dfd-1mw/EVVVMJN/cloud.json"
   }
 ]
