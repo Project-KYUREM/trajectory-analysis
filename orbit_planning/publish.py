@@ -3,7 +3,8 @@
 Each run becomes ``docs/data/<model>/<sequence>/cloud.json``: every point of
 the cloud, a ``trajectory.describe()`` for each point flagged ``detail``, and
 the ECLIPJ2000 to EME2000 rotation. ``planets.json`` (orbit polylines shared
-by all runs) and ``index.json`` (the gallery manifest) are written alongside.
+by all runs) and ``index.json`` (the gallery manifest) are written alongside,
+then ``fronts.py`` builds each model's combined front (``fronts.json``).
 Floats are rounded to a per-key precision.
 """
 import argparse
@@ -11,6 +12,7 @@ import json
 
 import numpy as np
 
+import fronts
 import mission
 import models
 import paths
@@ -202,6 +204,7 @@ def main():
         json.dumps(compact(planet_orbits(labels)), separators=(',', ':')))
     (paths.DOCS_DATA_DIR / 'index.json').write_text(json.dumps(index, indent=2))
     print(f"\nwrote index.json ({len(index)} runs) and planets.json ({len(labels)} bodies)")
+    fronts.build_all()   # docs/data/<model>/fronts.json: the "Best by trip time" tab
 
 
 if __name__ == '__main__':

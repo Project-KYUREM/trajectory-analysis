@@ -9,6 +9,7 @@ const theme = () => ({
   surface: cssVar('--surface'), ink: cssVar('--ink'), ink2: cssVar('--ink-2'),
   grid: cssVar('--grid'), accent: cssVar('--accent'), accent2: cssVar('--accent-2'),
   thrust: [cssVar('--thrust-lo'), cssVar('--thrust-mid'), cssVar('--thrust-hi')],
+  cat: [cssVar('--cat-1'), cssVar('--cat-2'), cssVar('--cat-3')], catOther: cssVar('--cat-other'),
 });
 
 // One formatting policy for the cost axis, whatever its units.

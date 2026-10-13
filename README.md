@@ -26,6 +26,7 @@ python orbit_planning/batch.py --models capture,ballistic \
 #    (anything batch.py does not recognise is forwarded to pareto.py)
 
 # 2. publish: compact every run found under results/ into docs/data/
+#    (also builds each model's combined front, docs/data/<model>/fronts.json)
 python orbit_planning/publish.py
 
 # 3. view: any static server; GitHub Pages serves docs/ directly
@@ -198,9 +199,10 @@ drawn as the coasts between Sims-Flanagan impulses).
 | `orbit_planning/sequence_sweep.py` | run an array of sequences for one model and rank them |
 | `scripts/run_dfd_sweep.sh` | the 77-sequence DFD sweep, many sequences in parallel on one machine |
 | `orbit_planning/publish.py`     | raw results → `docs/data/` |
+| `orbit_planning/fronts.py`      | each model's combined Pareto front over all sequences → `docs/data/<model>/fronts.json` (the "Best by trip time" tab; kernel-free, rerunnable on its own) |
 | `orbit_planning/porkchop.py`    | static PNG of one run's cloud |
 | `orbit_planning/slingshot_planning.py` | notebook for poking at one champion |
-| `docs/`                         | the site: `common.js`, `run.js`, `gallery.js`, `kepler.js` |
+| `docs/`                         | the site: `common.js`, `run.js`, `gallery.js`, `fronts.js`, `kepler.js` |
 | `pyproject.toml`                | the `aerocapture` package (`pip install -e .`) and pytest settings |
 | `aerocapture/core/system.py`, `paths.py` | Neptune-system kernels, constants, NEQ frame, Triton circular fit; data and output directories |
 | `aerocapture/core/atmosphere.py`, `heating.py`, `dynamics.py`, `arrival.py` | Neptune-GRAM atmosphere, heating fits, equations of motion and conics, arrival hyperbola |

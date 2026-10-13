@@ -35,6 +35,9 @@ async function main() {
     `${state.seq} · ${state.cloud.labels.join(' → ')} · ${state.cloud.blurb}`;
   bindControls();
   drawScatter();
+  // Deep link from the "Best by trip time" tab: ?pt=<point id> opens that trajectory.
+  const pt = params.get('pt');
+  if (pt && state.cloud.detail[pt]) showDetail(pt);
 }
 
 main().catch(error => {
