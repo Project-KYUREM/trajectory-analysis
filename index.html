@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kyurem — Neptune trajectory explorer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <h1>Kyurem</h1>
+  <span class="sub">Earth→Neptune multiple-gravity-assist trajectory families — browse a sequence, pick a trajectory, export it for GMAT/STK.</span>
+</header>
+<main>
+  <nav class="tabs">
+    <a href="#runs" data-tab="runs">Runs by sequence</a>
+    <a href="#fronts" data-tab="fronts">Best by trip time</a>
+  </nav>
+  <section data-panel="runs">
+    <div id="gallery"><p class="placeholder">Loading…</p></div>
+  </section>
+  <section data-panel="fronts" hidden>
+    <div class="panel">
+      <div class="controls">
+        <label class="sub">model <select id="frontModel"></select></label>
+        <span class="spacer"></span>
+        <span class="muted" id="frontNote"></span>
+      </div>
+      <div id="frontPlot"></div>
+      <p class="muted">For each time of flight, the cheapest trajectory any sequence offers: the
+        combined Pareto front over every published sequence of this model (step line). Grey points
+        are the other sequences' own fronts. Click a point to open that trajectory.</p>
+      <table class="mission" id="frontTable"></table>
+    </div>
+  </section>
+</main>
+<script src="common.js"></script>
+<script src="gallery.js"></script>
+<script src="fronts.js"></script>
+</body>
+</html>
