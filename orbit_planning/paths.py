@@ -16,7 +16,7 @@ RESULTS_DIR = ROOT / "results"      # raw search output (gitignored, large)
 DOCS_DIR = ROOT / "docs"            # the static site
 DOCS_DATA_DIR = DOCS_DIR / "data"   # compacted site payload (committed)
 
-DEFAULT_MODELS = ("capture", "ballistic")
+DEFAULT_MODELS = ("chem",)
 DEFAULT_SEQUENCES = ("EVEEJN", "EVEJN", "EVJN", "EVVEJN", "EJN")
 
 # Default gravity-assist sequences of the low-thrust (DFD) sequence sweep:

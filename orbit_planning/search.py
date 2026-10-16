@@ -264,7 +264,7 @@ def polish_job(job):
     prob = models.problem(job['model'], job['sequence'], launch_window=window,
                           tof_days=job.get('tof_days'), constrained=True)
     x0 = clip(prob, job['x'])
-    before = float(prob.fitness(x0)[0])
+    before = model.cost_of(prob.fitness(x0))
     before_feasible = bool(prob.feasibility_x(x0))
     t0 = time.time()
     error = None
@@ -274,6 +274,7 @@ def polish_job(job):
     except Exception as exc:   # pygmo/IPOPT raise ValueError/RuntimeError
         after, x, error = before, list(x0), f"{type(exc).__name__}: {str(exc).strip()[:300]}"
     score = models.evaluate(job['model'], job['sequence'], x, window, job.get('tof_days'))
+    after = model.cost_of(prob.fitness(x))   # the model's cost, not the raw objective
     result = dict(before=before, before_feasible=before_feasible, after=after, x=x,
                   feasible=score['feasible'],
                   violation=score['violation'], seconds=time.time() - t0)
@@ -325,7 +326,7 @@ def add_search_args(parser, islands, pop, gen, rounds):
         gen (int): Default generations per island per round.
         rounds (int): Default number of evolution rounds.
     """
-    parser.add_argument('--model', default='capture', choices=sorted(models.MODELS),
+    parser.add_argument('--model', default='chem', choices=sorted(models.MODELS),
                         help='propulsion/objective model')
     parser.add_argument('--sequence', default=paths.DEFAULT_SEQUENCES[0],
                         help='flyby sequence string, e.g. EVEEJN (Earth -> destination)')
@@ -419,7 +420,7 @@ def result_header(args):
         'cost_label': model.label,
         'cost_units': model.units,
         'tof_bounds_days': models.tof_bounds(model.name),
-        'vinf_bounds_kms': model.launch_vinf_kms or mission.LAUNCH_VINF_KMS,
+        'vinf_bounds_kms': model.launch_vinf_kms,
         'constrained': model.constrained,
         **({'assumptions': model.assumptions} if model.assumptions else {}),
     }
@@ -435,7 +436,7 @@ def run_settings(args, wall_seconds, **extra):
 
     Returns:
         dict: Search options, timing, the model's objective and the destination's
-        capture parameters.
+        target orbit.
     """
     return {
         'islands': args.islands, 'pop': args.pop, 'gen': args.gen,
@@ -447,6 +448,6 @@ def run_settings(args, wall_seconds, **extra):
         'polish_local': models.get(args.model).local,
         'polish_maxeval': args.polish_maxeval, 'polish_stop': args.polish_stop,
         'objective': models.get(args.model).objective,
-        'destination_capture': mission.resolve_bounds(args.sequence).destination.get('capture'),
+        'target_orbit': mission.resolve_bounds(args.sequence).destination.get('target_orbit'),
         **extra,
     }

@@ -159,7 +159,8 @@ def publish_run(model_name, sequence):
         del p['x']
 
     meta = dict(model=model_name, sequence=sequence, labels=raw['labels'],
-                cost_label=model.label, cost_units=model.units, blurb=model.blurb,
+                cost_label=model.label, cost_units=model.units, counts=model.counts,
+                blurb=model.blurb, wet_mass_kg=mission.LAUNCH_MASS_KG,
                 settings=raw.get('settings', {}),
                 frames=dict(eclip_to_eme=trajectory.ECLIP_TO_EME.tolist()))
     size = sitedata.write_run(paths.docs_run_dir(model_name, sequence), compact(meta),
@@ -168,7 +169,8 @@ def publish_run(model_name, sequence):
     front = [p for p in points if p['pareto']]
     best = min(front, key=lambda p: p['cost'])
     return dict(model=model_name, sequence=sequence, labels=raw['labels'],
-                cost_label=model.label, cost_units=model.units,
+                cost_label=model.label, cost_units=model.units, counts=model.counts,
+                wet_mass_kg=mission.LAUNCH_MASS_KG,
                 n_points=len(points), n_front=len(front), n_detail=len(detail),
                 size_mb=round(size / 1e6, 2),
                 best_cost=best['cost'], best_tof_years=best['tof_days'] / 365.25,
@@ -180,7 +182,9 @@ def merge_index(new_entries, replace=False):
 
     Publishing from a machine that holds only some of the raw results (a
     cluster running one sweep) must not drop runs published earlier from
-    elsewhere: their ``cloud.json`` files are still in ``docs/data``.
+    elsewhere: their ``cloud.json`` files are still in ``docs/data``. Runs of
+    models no longer registered (the retired ``capture`` and ``ballistic``)
+    are dropped: they priced a different mission.
 
     Args:
         new_entries (list[dict]): Index entries published in this call.
@@ -197,8 +201,12 @@ def merge_index(new_entries, replace=False):
     if not replace and index_path.is_file():
         for old in json.loads(index_path.read_text()):
             key = (old['model'], old['sequence'])
+            if old['model'] not in models.MODELS:
+                continue
             if key not in merged and (paths.DOCS_DIR / old['path']).is_file():
-                merged[key] = old
+                model = models.get(old['model'])   # refresh the model's site labels
+                merged[key] = dict(old, cost_label=model.label, counts=model.counts,
+                                   wet_mass_kg=mission.LAUNCH_MASS_KG)
                 kept += 1
     return [merged[k] for k in sorted(merged)], kept
 

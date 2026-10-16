@@ -1,6 +1,6 @@
 """Find the cost / time-of-flight Pareto front for one model and sequence.
 
-Example: ``python orbit_planning/pareto.py --model capture --sequence EVEEJN
+Example: ``python orbit_planning/pareto.py --model chem --sequence EVEEJN
 --sweep``. NSGA-II individuals from every island are kept and the
 non-dominated ones are flagged. A TOF-spanning sub-sample of the front is then
 MBH-polished and dominance is recomputed over the whole cloud. Run it as a

@@ -7,7 +7,7 @@
 # __main__ -- in a notebook that is this file, so a search in a cell would
 # re-run the notebook in every worker. Produce a champion first with
 #
-#     python orbit_planning/optimize.py --model capture --sequence EVEEJN
+#     python orbit_planning/optimize.py --model chem --sequence EVEEJN
 #
 # then run these cells. The website (docs/) shows the same information for
 # every point of every run; this notebook is for poking at one in Python.
@@ -15,7 +15,7 @@ import json
 import sys
 from pathlib import Path
 
-MODEL, SEQUENCE = 'capture', 'EVEEJN'
+MODEL, SEQUENCE = 'chem', 'EVEEJN'
 
 try:
     _HERE = Path(__file__).resolve().parent
@@ -37,27 +37,26 @@ desc = trajectory.describe(MODEL, SEQUENCE, x)
 model = models.get(MODEL)
 
 print(f"{SEQUENCE} / {MODEL}: {desc['cost']:.0f} {model.units}  ({model.label})")
-print(f"  launch  {desc['launch']['date'][:10]}   C3 {desc['launch']['c3_km2s2']:.1f} km2/s2   "
-      f"asymptote RA/dec {desc['launch']['rla_deg']:.1f}/{desc['launch']['dla_deg']:.1f} deg")
 for leg in desc['legs']:
-    dsm = f"{leg['dsm_ms']:.0f} m/s" if leg['dsm_ms'] is not None else '-'
-    print(f"  {leg['from']:8s} -> {leg['to']:8s} {leg['tof_days']:7.0f} d   maneuver {dsm}   "
-          f"arrive {leg['arr_date'][:10]}")
+    print(f"  {leg['from']:8s} -> {leg['to']:8s} {leg['tof_days']:7.0f} d   arrive {leg['arr_date'][:10]}")
+budget = desc['budget']
+for e in budget['events']:
+    print(f"  {e['date'][:10]}  {e['label']:55s} {e['dv_ms']:7.0f} m/s {e['propellant_kg']:8.0f} kg"
+          f"  -> {e['mass_after_kg']:8.0f} kg")
 arr = desc['arrival']
-print(f"  arrival at {arr['body']}: vinf {arr['vinf_ms']:.0f} m/s, atmospheric entry "
-      f"{arr['entry_speed_ms'] / 1e3:.1f} km/s"
-      + (f", capture burn {arr['capture_dv_ms']:.0f} m/s" if arr['capture_dv_ms'] else ''))
-print(f"  total {desc['totals']['tof_years']:.2f} yr")
+print(f"  arrival vinf {arr['vinf_ms']:.0f} m/s; in a {arr['orbit_periapsis_km']:,.0f} x "
+      f"{arr['orbit_apoapsis_km']:,.0f} km orbit with {budget['final_mass_kg']:.0f} kg after "
+      f"{desc['totals']['tof_years']:.2f} yr")
 
 # %%
-# pykep's own narrative of the same vector.
+# The trajectory as pykep's mga_1dsm builds it (chem models).
 udp = models.build(MODEL, SEQUENCE)
-udp.pretty(x)
+udp.inner.pretty(x)
 
 # %%
 fig = plt.figure(figsize=(10, 8))
 ax = fig.add_subplot(111, projection='3d')
-udp.plot(x, ax=ax)
+udp.inner.plot(x, ax=ax)
 ax.set_title(f"{SEQUENCE} ({MODEL}): {desc['cost']:.0f} {model.units}")
 ax.set_box_aspect([1, 1, 1])
 plt.show()
@@ -72,7 +71,7 @@ arrival_epoch = pk.epoch(desc['arrival']['epoch_mjd2000'], 'mjd2000')
 r_tri, v_tri = triton.eph(arrival_epoch)
 print(f"Triton at {arrival_epoch}: radius {sum(c * c for c in r_tri) ** 0.5 / 1e3:,.0f} km, "
       f"orbital speed {sum(c * c for c in v_tri) ** 0.5:,.0f} m/s; "
-      f"capture ellipse rp = {neptune['capture']['rp_ratio']} R, e = {neptune['capture']['e']}")
+      f"target orbit {neptune['target_orbit']}")
 
 # %%
 # The static porkchop of this pair's Pareto cloud (needs pareto.py to have run).

@@ -85,7 +85,8 @@ button:hover, select:hover { border-color: var(--accent-2); }
 table.mission { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
 table.mission th, table.mission td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--grid); }
 table.mission th { color: var(--ink-2); font-weight: 600; }
-table.mission td.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.mission td.num, table.mission th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.mission td.date { white-space: nowrap; }
 .kpis { display: flex; gap: 18px; flex-wrap: wrap; margin: 10px 0; }
 .kpi { }
 .kpi .v { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
@@ -93,3 +94,13 @@ table.mission td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .exports { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 .placeholder { color: var(--ink-2); padding: 40px 10px; text-align: center; }
 code { background: var(--surface); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+/* shared mission assumptions, index page */
+dl.assumptions { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; margin: 0 0 16px;
+  font-size: 13px; }
+dl.assumptions dt { color: var(--ink-2); font-weight: 600; }
+dl.assumptions dd { margin: 0; }
+@media (max-width: 760px) { dl.assumptions { grid-template-columns: 1fr; } dl.assumptions dd { margin-bottom: 6px; } }
+.grid.colhead .counts { text-transform: none; letter-spacing: 0; display: block; margin-top: 2px; }
+table.mission tr.sub td, table.mission tr.sub th { border-top: 1px solid var(--ink-2); font-weight: 600; }
+table.mission tr.total td, table.mission tr.total th { color: var(--ink); font-weight: 650; }

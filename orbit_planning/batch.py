@@ -1,6 +1,6 @@
 """Run ``pareto.py`` for every (model, sequence) pair in a matrix.
 
-Example: ``python orbit_planning/batch.py --models capture,ballistic
+Example: ``python orbit_planning/batch.py --models chem
 --sequences EVEEJN,EVEJN --sweep``. Options this script does not recognise are
 forwarded to ``pareto.py`` unchanged, and each pair runs in its own process.
 A pair whose ``pareto.json`` already holds the same kind of run (swept or

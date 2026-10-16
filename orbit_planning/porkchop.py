@@ -1,6 +1,6 @@
 """Render a static two-panel porkchop PNG from a raw ``pareto.json``.
 
-Example: ``python orbit_planning/porkchop.py --model capture --sequence EVEEJN
+Example: ``python orbit_planning/porkchop.py --model chem --sequence EVEEJN
 --theme dark``. Each marker is one trajectory the search found, ringed when
 non-dominated. A multi-flyby trajectory has more free parameters than its two
 dates, so many costs share one launch/arrival pair.

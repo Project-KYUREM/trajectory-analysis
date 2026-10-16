@@ -13,9 +13,11 @@ const theme = () => ({
 });
 
 // One formatting policy for the cost axis, whatever its units.
+const fmtInt = value => Math.round(value).toLocaleString('en-US');
 function fmtCost(value, units) {
-  return units === 'm/s' ? `${(value / 1000).toFixed(2)} km/s` : `${value.toFixed(0)} ${units}`;
+  return units === 'm/s' ? `${(value / 1000).toFixed(2)} km/s` : `${fmtInt(value)} ${units}`;
 }
+const fmtKms = ms => `${(ms / 1000).toFixed(2)} km/s`;
 
 const mjd2000ToDate = mjd => new Date(MJD2000_MS + mjd * 86400e3);
 const mjd2000ToYear = mjd => 2000 + mjd / 365.25;

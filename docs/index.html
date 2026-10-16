@@ -9,11 +9,20 @@
 <body>
 <header class="top">
   <h1>Kyurem</h1>
-  <span class="sub">Earth→Neptune multiple-gravity-assist trajectory families — browse a sequence, pick a trajectory, export it for GMAT/STK.</span>
+  <span class="sub">Earth → Neptune gravity-assist trajectories, one search per sequence and propulsion model.</span>
 </header>
 <main>
+  <dl class="assumptions">
+    <dt>Same mission for every model</dt>
+    <dd>20,000 kg delivered to Earth escape (C3 = 0) · ends in a 30,778 × 443,449 km Neptune orbit
+      (periapsis 1.25 R<sub>N</sub>, apoapsis 1.25 × Triton's distance)</dd>
+    <dt>Cost</dt>
+    <dd>propellant burned from launch to that orbit, kg · mass in orbit = 20,000 kg − propellant</dd>
+    <dt>Time of flight</dt>
+    <dd>launch → in orbit (includes the DFD capture spiral)</dd>
+  </dl>
   <nav class="tabs">
-    <a href="#runs" data-tab="runs">Runs by sequence</a>
+    <a href="#runs" data-tab="runs">By sequence</a>
     <a href="#fronts" data-tab="fronts">Best by trip time</a>
   </nav>
   <section data-panel="runs">
@@ -27,9 +36,7 @@
         <span class="muted" id="frontNote"></span>
       </div>
       <div id="frontPlot"></div>
-      <p class="muted">For each time of flight, the cheapest trajectory any sequence offers: the
-        combined Pareto front over every published sequence of this model (step line). Grey points
-        are the other sequences' own fronts. Click a point to open that trajectory.</p>
+      <p class="muted" id="frontHelp"></p>
       <table class="mission" id="frontTable"></table>
     </div>
   </section>

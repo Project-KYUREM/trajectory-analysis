@@ -21,7 +21,7 @@ so the `# %%` cell scripts run in an interactive window or as files.
 
 ```bash
 # 1. search: the cost / time-of-flight front per (model, sequence) -> results/<model>/<sequence>/
-python orbit_planning/batch.py --models capture,ballistic \
+python orbit_planning/batch.py --models chem \
     --sequences EVEEJN,EVEJN,EVJN,EVVEJN,EJN --sweep --polish 24
 #    (anything batch.py does not recognise is forwarded to pareto.py)
 
@@ -56,20 +56,48 @@ pushing. Because the data lives only in `docs/data/` on the machine that
 publishes, deploy from that machine (the cluster checkout, after
 `publish.py`).
 
-Single runs: `python orbit_planning/optimize.py --model ballistic --sequence EJN`
+Single runs: `python orbit_planning/optimize.py --model chem --sequence EJN`
 finds the one cheapest trajectory (its `champion.json` feeds the notebook, not
 the site); `pareto.py` finds the whole front, which is what gets published.
 Both take `--sweep` (one search per synodic launch slice) and `--help`.
 
 ## Models (`--model`)
 
-| model | pykep problem | cost axis |
-|-------|---------------|-----------|
-| `capture`   | mga_1dsm + insertion into an e=0.99 ellipse | deep-space maneuvers + capture burn (m/s) |
-| `ballistic` | mga, gravity assists only, flyby arrival     | departure Δv beyond the launch allowance (m/s) |
-| `nep`       | mga_lt_nep, 40 kWe nuclear-electric          | builds and runs but is not decoded or published; the NEP path is "export a `ballistic`/`capture` GMAT seed and convert the impulses to finite burns in GMAT" |
-| `dfd`       | Sims-Flanagan MGA (`lowthrust.MgaLowThrust`), Direct Fusion Drive 10 N @ 10 000 s (2 MW), 20 t at Earth escape, continuous thrust + gravity assists, Q-law low-thrust capture into a 1.25 R_N × 443 449 km Neptune orbit | propellant, cruise + capture (kg); time axis includes the capture spiral |
-| `dfd-1mw`   | as `dfd` with the 1 MW engine, 5 N @ 10 000 s | as `dfd` |
+Every published model flies the same mission and is scored the same way:
+
+- **Launch:** the launcher delivers 20,000 kg to Earth escape (C3 = 0).
+  Anything faster comes out of the spacecraft's propellant
+  (`mission.LAUNCH_MASS_KG`, `LAUNCH_C3_KM2S2`).
+- **End state:** a 30,778 × 443,449 km Neptune orbit: periapsis 1.25 R_N,
+  apoapsis 1.25 × Triton's distance (`mission.BODIES['N']['target_orbit']`).
+- **Cost:** propellant burned from launch to that orbit, in kg. Mass in
+  orbit = 20,000 kg − cost.
+- **Time of flight:** launch → in orbit.
+
+| model | trajectory | what the propellant pays for |
+|-------|------------|------------------------------|
+| `chem`    | pykep `mga_1dsm`: one deep-space maneuver per leg, unpowered flybys | departure burn at a 200 km perigee (from C3 = 0 to the chosen v∞) + deep-space maneuvers + one periapsis burn into the target orbit; Isp 350 s, each burn from the mass left (`models.CHEM`) |
+| `dfd`     | Sims-Flanagan MGA (`lowthrust.MgaLowThrust`), Direct Fusion Drive 10 N @ 10,000 s (2 MW), continuous thrust + unpowered flybys | cruise thrust + Q-law low-thrust capture spiral into the target orbit; the time axis includes the spiral |
+| `dfd-1mw` | as `dfd` with the 1 MW engine, 5 N @ 10,000 s | as `dfd` |
+| `nep`     | pykep `mga_lt_nep`, 40 kWe nuclear-electric | builds and runs, but is not decoded or published (GMAT seed only) |
+
+Each trajectory on the site lists every burn (or thrust phase) with its
+date, Δv, propellant and the mass left, subtotalled as *getting to Neptune*
+and *orbit insertion*.
+
+`chem` searches on the total Δv, which ranks trajectories exactly as
+propellant does at a fixed Isp. Unlike propellant, it does not level off near
+the full 20 t for poor trajectories, so the search sees a useful gradient. The
+results report propellant. The departure burn is priced at perigee (the Oberth
+effect): 7 km/s of v∞ costs 2.0 km/s, not 7. The chemical model follows how
+chemical Neptune missions are designed in the literature (sources under
+*Chemical baseline references*).
+
+The earlier `capture` and `ballistic` models are retired. They gave the
+launch up to C3 = 25 km²/s² for free and ended in a different state:
+`capture` in a loose e = 0.99 ellipse, `ballistic` matched Neptune's
+velocity with no orbit. `publish.py` drops their runs from the site index;
+delete `docs/data/capture` and `docs/data/ballistic` to remove the files.
 
 Sequences are strings over the body registry (`V E M J S U N`), Earth first,
 destination last: `EVEEJN`, `EVEJN`, `EVJN`, `EVVEJN`, `EJN`, `EJUN`, `EN`, …
@@ -686,6 +714,43 @@ Satellite Systems / PPPL Direct Fusion Drive numbers below.
   optimization: pagmo", *JOSS* 5(53), 2338, 2020.
   https://doi.org/10.21105/joss.02338 — archipelagos, SADE, NSGA-II, MBH, and the
   IPOPT / NLopt wrappers of the polish.
+
+### Chemical baseline references
+
+What comparable Neptune and ice-giant mission studies do: chemical cruises are
+gravity assists plus deep-space maneuvers, followed by one chemical insertion
+burn. That is the `chem` model.
+
+- Ice Giants Pre-Decadal Survey Mission Study Report (NASA/JPL, 2017),
+  arXiv:2511.13946. https://arxiv.org/abs/2511.13946
+  - Over 10,000 trajectories with up to four flybys; chemical-with-DSM, SEP
+    and REP options.
+  - Neptune orbit insertion of 2.3–3.5 km/s.
+  - No all-chemical Neptune trajectory under 15 years.
+- K. Hughes, J. Knittel, J. Englander, "Gravity-Assist Trajectories to the Ice
+  Giants: An Automated Method to Catalog Mass- or Time-Optimal Solutions",
+  AAS 17-605, 2017.
+  https://ntrs.nasa.gov/api/citations/20170011198/downloads/20170011198.pdf
+  - EMTG multiple-gravity-assist search with impulsive maneuvers between
+    flybys, launch years 2024–2038.
+- E. Rymer et al., "Neptune Odyssey: A Flagship Concept for the Exploration of
+  the Neptune–Triton System", *Planetary Science Journal* 2, 184, 2021.
+  https://par.nsf.gov/biblio/10476832
+  - About 3.2 t at launch.
+  - Jupiter assist with a 12-year cruise for launches by 2031; direct
+    trajectory with a 16-year cruise after that.
+  - Chemical orbit insertion; Triton flybys shape the tour.
+- S. Campagnola et al., "Mission Design for the Exploration of Neptune and
+  Triton", ISSFD 2014.
+  https://issfd.org/ISSFD_2014/ISSFD24_Paper_S6-1_campagnola.pdf
+  - ESA study: SEP module for the inner cruise, Jupiter or Saturn assist.
+  - Chemical Neptune insertion.
+- Arcanum, "Concept of operations for the Neptune system mission Arcanum",
+  *The Aeronautical Journal* 128, 469–488, 2024.
+  https://doi.org/10.1017/aer.2023.114
+  - Starship-class mass, with an Earth departure stage.
+  - A direct transfer within 10–15 years would need C3 ≈ 180 km²/s²;
+    the mission instead enters a highly eccentric Neptune orbit.
 
 ### Neptune target orbit
 

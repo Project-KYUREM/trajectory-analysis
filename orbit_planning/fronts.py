@@ -91,6 +91,7 @@ def build_model(model, runs):
 
     first = runs[0]
     out = dict(model=model, cost_label=first['cost_label'], cost_units=first['cost_units'],
+               counts=first.get('counts'),
                runs=used, points=[{**p, 'cost': round(p['cost'], 3), 'tof_days': round(p['tof_days'], 3),
                                    'launch_mjd2000': round(p['launch_mjd2000'], 4)} for p in kept])
     target = paths.DOCS_DATA_DIR / model / 'fronts.json'

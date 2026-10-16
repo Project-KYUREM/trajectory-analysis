@@ -5,7 +5,7 @@ including pygmo's spawned workers, has them: a pickled ``pykep.planet.spice``
 resolves positions against the kernel pool of the process it lands in.
 
 A sequence is a string of ``BODIES`` letters that starts at Earth and ends at
-a body with capture parameters, such as ``"EVEEJN"``. Stored epochs are
+a body with a ``target_orbit``, such as ``"EVEEJN"``. Stored epochs are
 MJD2000 (MJD - 51544.5); ``LAUNCH_WINDOW`` is quoted in MJD.
 """
 import datetime as _dt
@@ -72,13 +72,12 @@ def gm(body):
 #   ring (~2.32 R_S). Uranus's 2.1 clears the epsilon ring (~2.0 R_U); like
 #   Saturn it has no planet-centre ephemeris in de440, so its barycenter
 #   stands in.
-# capture / entry_altitude_m: present only on bodies that can end a sequence.
-#   capture = the loose insertion ellipse the `capture` model prices;
+# target_orbit / entry_altitude_m: present only on bodies that can end a sequence.
+#   target_orbit = the orbit every model must end in (periapsis in planet
+#   radii, apoapsis in km): `chem` prices one periapsis burn into it, the DFD
+#   models a low-thrust spiral (lowthrust.capture_sim);
 #   entry_altitude_m = height of the atmospheric entry interface above the
-#   1-bar radius, used for the reported entry speed.
-# lowthrust_orbit: the orbit the low-thrust (DFD) models spiral into: periapsis
-#   in planet radii, apoapsis in km; see models.DFD_SPACECRAFT and
-#   lowthrust.capture_sim.
+#   1-bar radius, used for the reported probe entry speed.
 # Triton's semi-major axis about Neptune, km (JPL satellite mean elements;
 # Jacobson 2009).
 TRITON_SMA_KM = 354759.0
@@ -98,13 +97,12 @@ BODIES = {
               radius=25559000.0, safe_ratio=2.1),
     'N': dict(label='Neptune', ephem='NEPTUNE', gm_of='NEPTUNE',
               radius=24622000.0, safe_ratio=1.1,
-              # loose first-capture ellipse (cheap to enter, walked down later);
               # 1000 km is the usual giant-planet entry-interface altitude
-              capture=dict(rp_ratio=1.1, e=0.99), entry_altitude_m=1000e3,
+              entry_altitude_m=1000e3,
               # periapsis 1.25 R_N (30 778 km), apoapsis 1.25 x Triton's orbit
               # (443 449 km): e = 0.87, period ~3.2 days, apoapsis ~0.4 % of
               # the Hill radius
-              lowthrust_orbit=dict(periapsis_radii=1.25, apoapsis_km=1.25 * TRITON_SMA_KM)),
+              target_orbit=dict(periapsis_radii=1.25, apoapsis_km=1.25 * TRITON_SMA_KM)),
 }
 
 _planet_cache = {}
@@ -133,7 +131,7 @@ def make_sequence(sequence):
 
     Raises:
         ValueError: If a letter is unknown, the sequence does not start at Earth,
-            or the final body has no capture parameters.
+            or the final body has no ``target_orbit``.
     """
     sequence = sequence.upper().strip()
     unknown = set(sequence) - set(BODIES)
@@ -141,8 +139,8 @@ def make_sequence(sequence):
         raise ValueError(f"unknown bodies {sorted(unknown)} in {sequence!r}")
     if not sequence.startswith('E'):
         raise ValueError(f"sequence must start at Earth: {sequence!r}")
-    if 'capture' not in BODIES[sequence[-1]]:
-        destinations = [k for k, b in BODIES.items() if 'capture' in b]
+    if 'target_orbit' not in BODIES[sequence[-1]]:
+        destinations = [k for k, b in BODIES.items() if 'target_orbit' in b]
         raise ValueError(f"sequence must end at a destination {destinations}: {sequence!r}")
     return [make_planet(c) for c in sequence], [BODIES[c]['label'] for c in sequence]
 
@@ -150,13 +148,13 @@ def make_sequence(sequence):
 # ------------------------------------------------------------------ bounds --
 # One bound on the whole cruise (8.2 .. 32.9 years); tof_encoding='alpha' takes
 # [min, max] days and lets the optimiser split the budget across legs itself.
-# Trident-class flyby profiles sit near 12 yr; capture-heavy ones run to ~30.
+# Chemical trajectories with Jupiter assists sit near 12 yr; slow ones run to ~30.
 MISSION_TOF_DAYS = [3000.0, 12000.0]
 
-# Launch hyperbolic excess speed, km/s (pykep multiplies by 1000 internally).
-# 5 km/s is C3 = 25 km^2/s^2, roughly what a heavy-lift launcher gives a
-# few-tonne probe; the optimiser may use less.
-LAUNCH_VINF_KMS = [0.0, 5.0]
+# The launch every model shares: the launcher puts 20 t on an Earth-escape
+# (C3 = 0) trajectory. Anything faster is the spacecraft's own propellant.
+LAUNCH_MASS_KG = 20000.0
+LAUNCH_C3_KM2S2 = 0.0
 
 # Two time scales are in play. NAIF/JPL tables and this window are quoted in
 # MJD; pykep works and every stored value (x[0], launch_mjd2000, ...) is in

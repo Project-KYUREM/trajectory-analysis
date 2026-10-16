@@ -2,10 +2,19 @@
 // with one column per model in a fixed order so models line up across rows.
 
 // Known models first, in this order; anything else follows alphabetically.
-const MODEL_ORDER = ['capture', 'ballistic', 'dfd', 'dfd-1mw', 'nep'];
+const MODEL_ORDER = ['chem', 'dfd', 'dfd-1mw', 'nep'];
+// Models that priced a different mission (free launch C3, other end orbit);
+// hidden until publish.py drops them from index.json.
+const RETIRED = ['capture', 'ballistic'];
 const modelRank = m => (MODEL_ORDER.includes(m) ? MODEL_ORDER.indexOf(m) : MODEL_ORDER.length);
+const liveRuns = runs => runs.filter(run => !RETIRED.includes(run.model));
 
-loadJSON('data/index.json').then(runs => {
+// "4,461 kg in orbit" when the run's cost is propellant out of a known launch mass.
+const inOrbit = (run, cost) => (run.wet_mass_kg && run.cost_units === 'kg'
+  ? ` → ${fmtInt(run.wet_mass_kg - cost)} kg in orbit` : '');
+
+loadJSON('data/index.json').then(all => {
+  const runs = liveRuns(all);
   const gallery = document.getElementById('gallery');
   if (!runs.length) {
     gallery.innerHTML = '<p class="placeholder">No runs published yet. Run batch.py, then publish.py.</p>';
@@ -24,8 +33,9 @@ loadJSON('data/index.json').then(runs => {
   const head = document.createElement('div');
   head.className = 'grid colhead';
   models.forEach(model => {
+    const run = runs.find(r => r.model === model);
     const cell = document.createElement('div');
-    cell.innerHTML = `<b>${model}</b> · ${runs.find(run => run.model === model).cost_label}`;
+    cell.innerHTML = `<b>${model}</b><span class="counts">${run.counts || run.cost_label}</span>`;
     head.appendChild(cell);
   });
   gallery.appendChild(head);
@@ -53,8 +63,8 @@ loadJSON('data/index.json').then(runs => {
       card.innerHTML = `
         <div class="model">${run.model}</div>
         <div class="seq">${run.sequence}</div>
-        <div class="stat">best <b>${fmtCost(run.best_cost, run.cost_units)}</b> · ${run.cost_label}</div>
-        <div class="stat">at <b>${run.best_tof_years.toFixed(1)} yr</b> · ${run.n_front} on front / ${run.n_points} pts</div>`;
+        <div class="stat">cheapest: <b>${fmtCost(run.best_cost, run.cost_units)}</b>${inOrbit(run, run.best_cost)}</div>
+        <div class="stat">in <b>${run.best_tof_years.toFixed(1)} yr</b> · ${run.n_front} on front of ${fmtInt(run.n_points)}</div>`;
       grid.appendChild(card);
     });
     gallery.appendChild(grid);

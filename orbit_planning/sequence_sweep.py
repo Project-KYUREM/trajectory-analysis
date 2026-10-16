@@ -141,14 +141,14 @@ def main():
     parser.add_argument('--max-years', type=float, default=None, dest='max_years',
                         help='rank by the cheapest point within this total flight time')
     parser.add_argument('--build-tables', action='store_true', dest='build_tables',
-                        help='only build (or load) the model\'s cached capture table, then exit; '
+                        help='only build (or load) the model\'s cached capture table (DFD models), then exit; '
                              'run this once before launching searches in parallel')
     args, forwarded = parser.parse_known_args()
 
     if args.build_tables:
         import models   # loads SPICE; the rest of this script does not need it
         models.build(args.model, 'EN')
-        print(f"capture table for {args.model} ready under {paths.RESULTS_DIR / 'cache'}")
+        print(f"{args.model}: ready (capture tables cache under {paths.RESULTS_DIR / 'cache'})")
         return
 
     sequences = [s.strip().upper() for s in args.sequences if s.strip()]

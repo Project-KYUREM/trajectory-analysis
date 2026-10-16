@@ -2,8 +2,8 @@
 // All data is precomputed by publish.py; trajectories are rebuilt in-browser
 // from arc states with kepler.js.
 
-const HINT = 'Click a point to inspect. Ringed points are Pareto-optimal (largest rings were ' +
-             'locally polished); only detailed points are clickable.';
+const HINT = 'Each dot is one trajectory. Ringed: Pareto-optimal (least propellant for its trip ' +
+             'time); large ring: locally refined. Click a ringed dot for its details.';
 
 const state = {
   model: null, seq: null,        // which run
@@ -55,7 +55,7 @@ function drawScatter() {
   const x = points.map(p => trade ? p.tof_days / 365.25 : p.launch_mjd2000);
   const y = points.map(p => trade ? p.cost : p.launch_mjd2000 + p.tof_days);
   const hover = points.map(p => {
-    const flags = (p.pareto ? '<br>Pareto-optimal' : '') + (p.polished ? '<br>locally polished' : '') +
+    const flags = (p.pareto ? '<br>Pareto-optimal' : '') + (p.polished ? '<br>locally refined' : '') +
                   (p.detail ? '' : '<br>(not detailed)');
     return trade
       ? `${fmtCost(p.cost, cloud.cost_units)}<br>${(p.tof_days / 365.25).toFixed(2)} yr${flags}`
@@ -85,7 +85,7 @@ function drawScatter() {
   const layout = {
     paper_bgcolor: t.surface, plot_bgcolor: t.surface, font: { color: t.ink2 },
     margin: { l: 60, r: 10, t: 10, b: 50 }, hovermode: 'closest', clickmode: 'event',
-    xaxis: trade ? { title: 'Time of flight (years)', gridcolor: t.grid, zeroline: false }
+    xaxis: trade ? { title: 'Time of flight, launch → in orbit (years)', gridcolor: t.grid, zeroline: false }
                  : dateAxis('Launch (year)'),
     yaxis: trade ? { title: `${cloud.cost_label} (${cloud.cost_units})`, gridcolor: t.grid, zeroline: false }
                  : dateAxis('Arrival (year)'),
@@ -124,6 +124,52 @@ function flash(message) {
 }
 
 // --- detail -------------------------------------------------------------------
+// Propellant budget of a low-thrust trajectory published before describe()
+// produced a ``budget`` section (same rows trajectory._lowthrust_budget builds).
+function budgetFromLowthrust(d) {
+  const lt = d.lowthrust;
+  let mass = lt.wet_mass_kg;
+  const events = d.legs.map((leg, i) => {
+    const end = lt.leg_end_mass_kg[i];
+    const e = { label: `thrust, ${leg.from} → ${leg.to} (${leg.tof_days.toFixed(0)} d)`, date: leg.dep_date,
+                dv_ms: leg.dsm_ms, propellant_kg: mass - end, mass_after_kg: end, phase: 'to_destination' };
+    mass = end;
+    return e;
+  });
+  const cap = lt.capture;
+  events.push({ label: `${d.arrival.body} capture spiral (${cap.days.toFixed(0)} d)`, date: d.arrival.date,
+                dv_ms: cap.dv_ms, propellant_kg: mass - lt.final_mass_kg, mass_after_kg: lt.final_mass_kg,
+                days: cap.days, phase: 'insertion' });
+  const total = phase => events.filter(e => e.phase === phase).reduce(
+    (acc, e) => ({ dv_ms: acc.dv_ms + e.dv_ms, propellant_kg: acc.propellant_kg + e.propellant_kg }),
+    { dv_ms: 0, propellant_kg: 0 });
+  return { wet_mass_kg: lt.wet_mass_kg, final_mass_kg: lt.final_mass_kg,
+           propellant_kg: lt.wet_mass_kg - lt.final_mass_kg, isp_s: lt.spacecraft.isp_s, events,
+           to_destination: total('to_destination'), insertion: total('insertion') };
+}
+
+function budgetTable(b, body, lowThrust) {
+  const kg = v => `${fmtInt(v)} kg`;
+  const row = e => `<tr><td>${e.label}</td><td class="date">${isoDay(e.date)}</td><td class="num">${fmtInt(e.dv_ms)} m/s</td>
+    <td class="num">${kg(e.propellant_kg)}</td><td class="num">${kg(e.mass_after_kg)}</td></tr>`;
+  const sub = (label, part, cls = 'sub') => `<tr class="${cls}"><th colspan="2">${label}</th>
+    <td class="num">${fmtInt(part.dv_ms)} m/s</td><td class="num">${kg(part.propellant_kg)}</td><td></td></tr>`;
+  const phase = name => b.events.filter(e => e.phase === name).map(row).join('');
+  return `<table class="mission">
+    <tr><th>${lowThrust ? 'thrust phase' : 'burn'} (Isp ${fmtInt(b.isp_s)} s)</th><th>${lowThrust ? 'starts' : 'date'}</th><th class="num">Δv</th>
+        <th class="num">propellant</th><th class="num">mass after</th></tr>
+    <tr><td>launch: launcher delivers to Earth escape (C3 = 0)</td><td></td><td class="num">—</td>
+        <td class="num">—</td><td class="num">${kg(b.wet_mass_kg)}</td></tr>
+    ${phase('to_destination')}
+    ${sub(`subtotal: getting to ${body}`, b.to_destination)}
+    ${phase('insertion')}
+    ${sub(`subtotal: ${body} orbit insertion`, b.insertion)}
+    <tr class="sub total"><th colspan="2">total</th>
+      <td class="num">${fmtInt(b.to_destination.dv_ms + b.insertion.dv_ms)} m/s</td>
+      <td class="num">${kg(b.propellant_kg)}</td><td class="num">${kg(b.final_mass_kg)}</td></tr>
+  </table>`;
+}
+
 function showDetail(id) {
   state.selected = id;
   const d = state.cloud.detail[id];
@@ -137,52 +183,54 @@ function showDetail(id) {
   }
   const arrival = d.arrival, launch = d.launch;
   const lt = d.lowthrust;   // low-thrust (Sims-Flanagan) models only
+  const b = d.budget || (lt ? budgetFromLowthrust(d) : null);
+  const orbit = arrival.orbit_periapsis_km
+    ? `${fmtInt(arrival.orbit_periapsis_km)} × ${fmtInt(arrival.orbit_apoapsis_km)} km orbit` : 'orbit';
   head.innerHTML = `
     <h2>${cloud.sequence} <span class="muted">· ${cloud.model}</span></h2>
-    <div class="muted">${isoDay(launch.date)} → ${isoDay(arrival.date)}</div>
+    <div class="muted">launch ${isoDay(launch.date)} · arrive ${isoDay(arrival.date)}` +
+    `${arrival.orbit_date && isoDay(arrival.orbit_date) !== isoDay(arrival.date) ? ` · in orbit ${isoDay(arrival.orbit_date)}` : ''}</div>
     <div class="kpis">
-      ${kpi(fmtCost(d.cost, cloud.cost_units), cloud.cost_label)}
-      ${kpi(`${d.totals.tof_years.toFixed(1)} yr`, 'time of flight')}
-      ${kpi(`${(arrival.vinf_ms / 1000).toFixed(2)} km/s`, `arrival speed at ${arrival.body} (v∞)`)}
-      ${lt ? kpi(`${lt.final_mass_kg.toFixed(0)} kg`, `mass in ${arrival.body} orbit`)
-           : kpi(`${(arrival.entry_speed_ms / 1000).toFixed(1)} km/s`, 'atmospheric entry speed')}
-      ${kpi(launch.c3_km2s2.toFixed(1), 'launch energy C3 (km²/s²)')}
+      ${b ? kpi(`${fmtInt(b.propellant_kg)} kg`, `propellant, of ${fmtInt(b.wet_mass_kg)} kg`)
+          : kpi(fmtCost(d.cost, cloud.cost_units), cloud.cost_label)}
+      ${b ? kpi(`${fmtInt(b.to_destination.propellant_kg)} + ${fmtInt(b.insertion.propellant_kg)} kg`,
+                `to ${arrival.body} + orbit insertion`) : ''}
+      ${b ? kpi(`${fmtInt(b.final_mass_kg)} kg`, `in ${orbit}`) : ''}
+      ${kpi(`${d.totals.tof_years.toFixed(1)} yr`, 'launch → in orbit')}
+      ${kpi(fmtKms(arrival.vinf_ms), `arrival v∞ at ${arrival.body}`)}
     </div>`;
-  const legRows = d.legs.map(leg => `<tr><td>${leg.from} → ${leg.to}</td>
-      <td class="num">${leg.tof_days.toFixed(0)} d</td>
-      <td class="num">${leg.dsm_ms != null ? leg.dsm_ms.toFixed(0) + ' m/s' : '—'}</td>
-      <td>${isoDay(leg.arr_date)}</td></tr>`).join('');
-  const captureRow = lt
-    ? `<tr><th>${arrival.body} low-thrust capture spiral to ${arrival.orbit_periapsis_km.toFixed(0)} × ${arrival.orbit_apoapsis_km.toFixed(0)} km orbit</th>
-         <td class="num" colspan="3">${arrival.capture_dv_ms.toFixed(0)} m/s over ${arrival.capture_spiral_days.toFixed(0)} d</td></tr>`
-    : arrival.capture_dv_ms != null
-    ? `<tr><th>${arrival.body} capture burn</th><td class="num" colspan="3">${arrival.capture_dv_ms.toFixed(0)} m/s</td></tr>` : '';
-  // Ballistic model: the assist cannot always bend the path enough; the leftover is a burn at the flyby.
-  const mismatchRows = d.flybys.filter(f => f.mismatch_dv_ms != null).map(f =>
-    `<tr><th>burn at ${f.body} flyby (assist shortfall)</th><td class="num" colspan="3">${f.mismatch_dv_ms.toFixed(0)} m/s</td></tr>`).join('');
+  const legRows = d.legs.map((leg, i) => {
+    const flyby = d.flybys[i];   // the flyby at this leg's end, if it is not the last leg
+    const rp = flyby && flyby.rp_m ? `${fmtInt(flyby.rp_m / 1e3)} km (${flyby.rp_radii.toFixed(2)} R)` : '—';
+    return `<tr><td>${leg.from} → ${leg.to}</td><td class="num">${leg.tof_days.toFixed(0)} d</td>
+      <td>${isoDay(leg.dep_date)} → ${isoDay(leg.arr_date)}</td><td class="num">${rp}</td></tr>`;
+  }).join('');
+  const departure = launch.vinf_ms > 1
+    ? `${fmtKms(launch.vinf_ms)} (C3 ${launch.c3_km2s2.toFixed(1)} km²/s²), asymptote RA ${launch.rla_deg.toFixed(1)}° / dec ${launch.dla_deg.toFixed(1)}°`
+    : '0 (leaves at the launcher\'s C3 = 0)';
   body.innerHTML = `
+    ${b ? budgetTable(b, arrival.body, !!lt) : ''}
     <table class="mission">
-      <tr><th>leg</th><th>time of flight</th><th>${lt ? 'thrust Δv' : 'deep-space maneuver'}</th><th>arrival date</th></tr>
+      <tr><th>leg</th><th class="num">duration</th><th>dates</th><th class="num">flyby periapsis at end</th></tr>
       ${legRows}
-      ${mismatchRows}
-      <tr><th>launch asymptote (right ascension / declination)</th>
-          <td class="num" colspan="3">${launch.rla_deg == null ? '— (C3 = 0)'
-            : `${launch.rla_deg.toFixed(1)}° / ${launch.dla_deg.toFixed(1)}°`}</td></tr>
-      ${captureRow}
     </table>
-    ${lt ? `<p class="muted">The 3D path is coloured by engine throttle, from coasting to full
-      ${lt.spacecraft.thrust_n} N (colour bar); hover it for the date and level. The capture spiral at
-      ${arrival.body} is not drawn (it is planetocentric).</p>` : ''}
+    <table class="mission">
+      <tr><th>departure v∞ (after any burn)</th><td class="num">${departure}</td></tr>
+      <tr><th>arrival v∞ at ${arrival.body}</th><td class="num">${fmtKms(arrival.vinf_ms)}</td></tr>
+      <tr><th>probe entry speed at ${fmtInt(arrival.entry_altitude_km)} km altitude</th>
+          <td class="num">${(arrival.entry_speed_ms / 1000).toFixed(1)} km/s</td></tr>
+    </table>
+    ${lt ? `<p class="muted">3D path coloured by throttle, coast to full ${lt.spacecraft.thrust_n} N; hover for
+      date and level. The capture spiral is planetocentric and not drawn.</p>` : ''}
     <div class="exports">
       <button id="expCsv">state vectors (CSV)</button>
       <button id="expGmat">GMAT seed</button>
       <button id="expJson">full data (JSON)</button>
     </div>
-    <p class="muted">The CSV and GMAT seed give heliocentric arc state vectors in two reference frames —
-    ecliptic J2000 and Earth-equatorial J2000 (EME2000) — to paste into GMAT or STK and re-propagate.</p>`;
+    <p class="muted">CSV and GMAT seed: heliocentric arc states in ecliptic J2000 and EME2000, for GMAT/STK.</p>`;
   const stem = `${cloud.model}_${cloud.sequence}_${id}`;
   document.getElementById('expCsv').onclick = () => download(`${stem}_states.csv`, statesCsv(d));
-  document.getElementById('expGmat').onclick = () => download(`${stem}_gmat_seed.txt`, gmatSeed(d));
+  document.getElementById('expGmat').onclick = () => download(`${stem}_gmat_seed.txt`, gmatSeed(d, b));
   document.getElementById('expJson').onclick = () => download(`${stem}.json`, JSON.stringify(d, null, 2));
 
   document.getElementById('view3d').hidden = false;
@@ -266,7 +314,7 @@ function statesCsv(d) {
   return [header.join(','), ...rows].join('\n') + '\n';
 }
 
-function gmatSeed(d) {
+function gmatSeed(d, budget) {
   const R = state.cloud.frames.eclip_to_eme;
   const dep = d.arcs[0], launch = d.launch, arrival = d.arrival;
   const [X, Y, Z] = rotate(R, dep.r_eclip_m), [VX, VY, VZ] = rotate(R, dep.v_eclip_ms);
@@ -284,13 +332,11 @@ function gmatSeed(d) {
   d.flybys.forEach(f => lines.push(`%   ${f.body.padEnd(8)} ${f.date}` +
     (f.rp_m ? `   rp = ${(f.rp_m / 1e3).toFixed(1)} km` : '')));
   lines.push(`%   ${arrival.body.padEnd(8)} ${arrival.date}   vinf = ${arrival.vinf_ms.toFixed(1)} m/s`);
-  lines.push('% Maneuvers to model as finite / electric-propulsion burns:');
-  lines.push(`%   launch            dv = ${launch.vinf_ms.toFixed(1)} m/s (departure vinf)`);
-  d.legs.forEach((leg, i) => { if (leg.dsm_ms)
-    lines.push(`%   dsm_leg${i + 1}          dv = ${leg.dsm_ms.toFixed(1)} m/s (${leg.from} -> ${leg.to})`); });
-  d.flybys.forEach(f => { if (f.mismatch_dv_ms)
-    lines.push(`%   flyby_${f.body.toLowerCase().padEnd(11)} dv = ${f.mismatch_dv_ms.toFixed(1)} m/s (assist shortfall at ${f.body})`); });
-  if (arrival.capture_dv_ms) lines.push(`%   capture           dv = ${arrival.capture_dv_ms.toFixed(1)} m/s at ${arrival.body}`);
+  if (budget) {
+    lines.push(`% Burns (Isp ${budget.isp_s} s, ${budget.wet_mass_kg} kg at Earth escape):`);
+    budget.events.forEach(e => lines.push(`%   ${e.date.slice(0, 10)}  dv ${e.dv_ms.toFixed(1).padStart(8)} m/s  ` +
+      `prop ${e.propellant_kg.toFixed(1).padStart(8)} kg  mass after ${e.mass_after_kg.toFixed(1)} kg  ${e.label}`));
+  }
   if (d.lowthrust) {
     const sc = d.lowthrust.spacecraft;
     lines.push(`% Low-thrust: ${sc.engine} ${sc.thrust_n} N @ ${sc.isp_s} s, wet ${sc.wet_mass_kg} kg; ` +

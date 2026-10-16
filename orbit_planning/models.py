@@ -2,15 +2,20 @@
 
 A ``Model`` holds everything model-specific: how to build its pykep UDP,
 decode a decision vector and read the headline cost, plus the provenance
-stamped into ``results/<model>/<sequence>/``. ``capture`` is ``mga_1dsm`` with
-orbit insertion (cost: deep-space maneuvers plus the capture burn).
-``ballistic`` is ``mga`` with gravity assists only and a flyby arrival (cost:
-departure delta-v beyond the launch-vinf allowance). ``dfd`` and ``dfd-1mw``
-are continuous-thrust Direct Fusion Drive models: a Sims-Flanagan
-gravity-assist problem (``lowthrust.MgaLowThrust``) from a 20 t Earth-escape
-launch to a highly eccentric Neptune orbit (cost: propellant). ``nep`` is a
-constrained Sims-Flanagan ``mga_lt_nep`` that serves as a GMAT seed and has no
-decoder.
+stamped into ``results/<model>/<sequence>/``.
+
+Every published model flies the same mission and is priced the same way:
+20 t delivered to Earth escape (C3 = 0), ending in the destination's
+``target_orbit``; the cost is the propellant (kg) burned on the way.
+
+* ``chem``: chemical, Isp 350 s. pykep's ``mga_1dsm`` trajectory (one
+  deep-space maneuver per leg, unpowered flybys); propellant for a perigee
+  departure burn, the deep-space maneuvers and one periapsis insertion burn.
+* ``dfd`` / ``dfd-1mw``: Direct Fusion Drive, continuous thrust. A
+  Sims-Flanagan gravity-assist problem (``lowthrust.MgaLowThrust``);
+  propellant for the cruise thrust and a low-thrust capture spiral.
+* ``nep``: a constrained Sims-Flanagan ``mga_lt_nep`` kept as a GMAT seed; it
+  has no decoder and is not published.
 
 Constrained models (``nep``, ``dfd``) are searched in two forms: the global
 archipelago sees the constraints folded into a penalty, and the local polish
@@ -35,10 +40,9 @@ import paths
 # MJD2000 (both pykep UDPs put t0 first); that is the only gene any code
 # outside this module may read. Everything else is model-private and reached
 # through ``Model.decode``:
-#   mga_1dsm  [t0, u, v, vinf, eta1, a1] + [beta, rp/rP, eta, a] per further
+#   chem      (mga_1dsm) [t0, u, v, vinf, eta1, a1] + [beta, rp/rP, eta, a] per further
 #             leg + [T]; two ballistic arcs per leg (coast to the DSM, then the
 #             Lambert arc).
-#   mga       [t0, T, a1 .. an]; one Lambert arc per leg.
 #   dfd       [t0, T, a1 .. an, ...]; see lowthrust.py (Layout) for the rest.
 
 
@@ -121,6 +125,10 @@ class Decoded:
             radii, when the model has it as a gene. Defaults to None.
         flyby_beta_rad (list[float], optional): Plane rotation angle of each
             flyby in radians, when the model has it as a gene. Defaults to None.
+        vinf_dep_vec, vinf_arr_vec (list[float], optional): Departure and
+            arrival v-infinity vectors, when the model has them directly.
+        lowthrust (dict, optional): Low-thrust masses, capture and impulses.
+        chemical (dict, optional): Chemical burns, masses and Isp.
     """
     leg_tof_days: list
     leg_dsm_ms: list
@@ -134,6 +142,7 @@ class Decoded:
     vinf_dep_vec: Optional[list] = None
     vinf_arr_vec: Optional[list] = None
     lowthrust: Optional[dict] = None
+    chemical: Optional[dict] = None
 
 
 @dataclass(frozen=True)
@@ -143,6 +152,8 @@ class Model:
     Args:
         name (str): CLI name for ``--model`` and the results directory.
         label (str): Plain-language name of the cost axis.
+        counts (str): What the cost includes, in one short line (site column
+            header).
         units (str): Units of the cost axis.
         blurb (str): One-line description shown on the site.
         objective (dict): Provenance recorded into every result file.
@@ -166,9 +177,8 @@ class Model:
             ``None`` polishes the raw problem. Defaults to None.
         tof_days (list[float], optional): Default ``[min, max]`` total time of
             flight; ``None`` uses ``mission.MISSION_TOF_DAYS``. Defaults to None.
-        launch_vinf_kms (list[float], optional): Launch v-infinity bounds
-            recorded in result headers; ``None`` uses
-            ``mission.LAUNCH_VINF_KMS``. Defaults to None.
+        launch_vinf_kms (list[float], optional): Departure v-infinity bounds
+            recorded in result headers. Defaults to None.
         assumptions (dict, optional): Spacecraft / engine record stored with
             every result. Defaults to None.
         polish_band (float, optional): Default fractional cruise-time band a
@@ -179,6 +189,7 @@ class Model:
     """
     name: str
     label: str
+    counts: str
     units: str
     blurb: str
     objective: dict
@@ -196,98 +207,151 @@ class Model:
     polish_pad_days: float = 45.0
 
 
-# ----------------------------------------------------------------- capture --
-def _build_capture(setup, multi_objective):
-    """Build an ``mga_1dsm`` that prices arrival as a burn into the capture ellipse.
+# -------------------------------------------------------------------- chem --
+# Chemical spacecraft. Same launch as every model (mission.LAUNCH_*): 20 t at
+# Earth escape. Every burn after that comes out of the 20 t at this Isp.
+CHEM = dict(
+    isp_s=350.0,
+    wet_mass_kg=mission.LAUNCH_MASS_KG,
+    departure_perigee_alt_km=200.0,   # departure burn at perigee of the escape orbit
+    vinf_max_kms=12.0,                # bound on the departure v-infinity gene
+)
+G0 = 9.80665
 
-    The burn happens at periapsis, where it sheds only the speed above escape
-    speed, so it costs far less than the raw arrival vinf.
 
-    Args:
-        setup (mission.Setup): Resolved sequence and bounds.
-        multi_objective (bool): Make the fitness ``(cost, tof)``.
+def chem_propellant_kg(dv_ms):
+    """Return the propellant that ``dv_ms`` of chemical burns takes out of the 20 t."""
+    return float(CHEM['wet_mass_kg'] * (1.0 - np.exp(-dv_ms / (CHEM['isp_s'] * G0))))
 
-    Returns:
-        pykep.trajopt.mga_1dsm: The UDP.
+
+def perigee_burn_ms(vinf_ms, mu, r_perigee):
+    """Return the perigee burn that turns an escape (C3 = 0) orbit into ``vinf``.
+
+    Burning at perigee gains the speed the well adds (Oberth effect), so the
+    burn is ``sqrt(vinf^2 + v_esc^2) - v_esc``, well below ``vinf``.
     """
-    capture = setup.destination['capture']
-    return pk.trajopt.mga_1dsm(
-        seq=setup.planets,
-        t0=setup.window,
-        tof=setup.tof_days,
-        tof_encoding='alpha',
-        vinf=mission.LAUNCH_VINF_KMS,
-        add_vinf_dep=False,   # the launcher supplies departure vinf
-        add_vinf_arr=True,    # required by orbit_insertion
-        multi_objective=multi_objective,
-        orbit_insertion=True,
-        rp_target=capture['rp_ratio'] * setup.destination['radius'],
-        e_target=capture['e'],
-    )
+    v_esc = np.sqrt(2.0 * mu / r_perigee)
+    return float(np.sqrt(vinf_ms ** 2 + v_esc ** 2) - v_esc)
 
 
-def _decode_capture(udp, x):
-    """Decode an ``mga_1dsm`` decision vector.
+def insertion_burn_ms(vinf_ms, mu, r_periapsis, r_apoapsis):
+    """Return the periapsis burn from an arrival hyperbola into an ellipse."""
+    v_hyperbola = np.sqrt(vinf_ms ** 2 + 2.0 * mu / r_periapsis)
+    v_ellipse = np.sqrt(2.0 * mu / r_periapsis - 2.0 * mu / (r_periapsis + r_apoapsis))
+    return float(v_hyperbola - v_ellipse)
 
-    Flyby ``i`` has its plane angle at gene ``6 + 4i`` and its periapsis ratio at
-    gene ``7 + 4i``.
 
-    Args:
-        udp (pykep.trajopt.mga_1dsm): The UDP the vector belongs to.
-        x (Sequence[float]): Decision vector.
+class ChemUDP:
+    """Chemical gravity-assist trajectory into the target orbit, priced in propellant.
 
-    Returns:
-        Decoded: The decoded trajectory.
+    The trajectory is pykep's ``mga_1dsm`` (one deep-space maneuver per leg,
+    unpowered flybys; same decision vector). Its built-in costs are replaced:
+
+    * departure: the launcher leaves 20 t at C3 = 0; the spacecraft burns at a
+      200 km perigee to reach the departure v-infinity gene (``x[3]``);
+    * deep-space maneuvers: as pykep computes them;
+    * insertion: one periapsis burn from the arrival hyperbola into the
+      destination's ``target_orbit``.
+
+    Each burn is taken from the mass left by the previous one (rocket equation
+    at ``CHEM['isp_s']``), so the propellant is a monotonic function of the
+    total delta-v. The search objective is that total delta-v (m/s): it ranks
+    trajectories exactly as propellant does, but does not flatten out near
+    the full 20 t for poor ones. The model's ``cost_of`` reports it as
+    propellant (kg). With ``multi_objective`` the second objective is the time
+    of flight (days).
     """
-    dv, lamberts, tof, arcs, epochs = udp._compute_dvs(x)
-    n_flybys = len(udp._seq) - 2
+
+    def __init__(self, setup, multi_objective):
+        """Build the trajectory problem for a ``mission.Setup``."""
+        self.inner = pk.trajopt.mga_1dsm(
+            seq=setup.planets, t0=setup.window, tof=setup.tof_days, tof_encoding='alpha',
+            vinf=[0.0, CHEM['vinf_max_kms']],
+            add_vinf_dep=False,    # priced here as a perigee burn
+            add_vinf_arr=True,     # last element of the dv list = arrival vinf
+            multi_objective=False, orbit_insertion=False)
+        self.multi_objective = multi_objective
+        earth, dest = setup.planets[0], setup.planets[-1]
+        orbit = setup.destination['target_orbit']
+        self.mu_earth = earth.mu_self
+        self.r_perigee = earth.radius + CHEM['departure_perigee_alt_km'] * 1e3
+        self.mu_dest = dest.mu_self
+        self.r_periapsis = orbit['periapsis_radii'] * dest.radius
+        self.r_apoapsis = orbit['apoapsis_km'] * 1e3
+
+    def budget(self, x):
+        """Return the burns of a decision vector and the trajectory pykep built.
+
+        Returns:
+            dict: ``burns`` (``kind``, ``leg``, ``epoch_mjd2000``, ``dv_ms``,
+            ``propellant_kg``, ``mass_after_kg`` per burn, in order),
+            ``vinf_dep_ms``, ``vinf_arr_ms``, ``propellant_kg``,
+            ``final_mass_kg``, plus pykep's ``dv``, ``lamberts``, ``tof``,
+            ``arcs`` and ``epochs``.
+        """
+        dv, lamberts, tof, arcs, epochs = self.inner._compute_dvs(x)
+        vinf_arr = float(dv[-1])
+        plan = [('departure', None, epochs[0],
+                 perigee_burn_ms(x[3], self.mu_earth, self.r_perigee))]
+        plan += [('dsm', i, epochs[2 * i + 1], float(d)) for i, d in enumerate(dv[:-1])]
+        plan.append(('insertion', None, epochs[0] + sum(tof),
+                     insertion_burn_ms(vinf_arr, self.mu_dest, self.r_periapsis, self.r_apoapsis)))
+        mass, burns = CHEM['wet_mass_kg'], []
+        for kind, leg, epoch, burn in plan:
+            after = mass * np.exp(-burn / (CHEM['isp_s'] * G0))
+            burns.append(dict(kind=kind, leg=leg, epoch_mjd2000=float(epoch), dv_ms=burn,
+                              propellant_kg=float(mass - after), mass_after_kg=float(after)))
+            mass = after
+        return dict(burns=burns, vinf_dep_ms=float(x[3]), vinf_arr_ms=vinf_arr,
+                    dv_ms=float(sum(burn for _, _, _, burn in plan)),
+                    propellant_kg=float(CHEM['wet_mass_kg'] - mass), final_mass_kg=float(mass),
+                    dv=dv, lamberts=lamberts, tof=tof, arcs=arcs, epochs=epochs)
+
+    def fitness(self, x):
+        """Return ``[total_dv_ms]`` or ``[total_dv_ms, tof_days]``."""
+        b = self.budget(x)
+        return [b['dv_ms'], float(sum(b['tof']))] if self.multi_objective else [b['dv_ms']]
+
+    def get_bounds(self):
+        """Return the ``mga_1dsm`` bounds."""
+        return self.inner.get_bounds()
+
+    def get_nobj(self):
+        """Return 2 for the multi-objective form, else 1."""
+        return 2 if self.multi_objective else 1
+
+    def get_name(self):
+        """Return the problem name."""
+        return 'chemical mga_1dsm into the target orbit'
+
+
+def _build_chem(setup, multi_objective):
+    """Build ``ChemUDP`` for a ``mission.Setup``."""
+    return ChemUDP(setup, multi_objective)
+
+
+def _decode_chem(udp, x):
+    """Decode a ``ChemUDP`` decision vector.
+
+    Flyby ``i`` has its plane angle at gene ``6 + 4i`` and its periapsis ratio
+    at gene ``7 + 4i``.
+    """
+    b = udp.budget(x)
+    n_flybys = len(udp.inner._seq) - 2
     return Decoded(
-        leg_tof_days=[float(t) for t in tof],
-        leg_dsm_ms=[float(d) for d in dv[:-1]],
+        leg_tof_days=[float(t) for t in b['tof']],
+        leg_dsm_ms=[float(d) for d in b['dv'][:-1]],
         flyby_mismatch_ms=[],
-        lamberts=lamberts,
-        arc_states=arcs,
-        arc_epochs=[float(e) for e in epochs],
-        capture_dv_ms=float(dv[-1]),
+        lamberts=b['lamberts'],
+        arc_states=b['arcs'],
+        arc_epochs=[float(e) for e in b['epochs']],
+        capture_dv_ms=b['burns'][-1]['dv_ms'],
         flyby_rp_radii=[float(x[7 + 4 * i]) for i in range(n_flybys)],
         flyby_beta_rad=[float(x[6 + 4 * i]) for i in range(n_flybys)],
-    )
-
-
-# --------------------------------------------------------------- ballistic --
-def _build_ballistic(setup, multi_objective):
-    """Build an ``mga`` with gravity assists only and a flyby arrival."""
-    return pk.trajopt.mga(
-        seq=setup.planets,
-        t0=setup.window,
-        tof=setup.tof_days,
-        vinf=mission.LAUNCH_VINF_KMS[1],   # scalar launch-vinf allowance, km/s
-        tof_encoding='alpha',
-        multi_objective=multi_objective,
-        orbit_insertion=False,
-    )
-
-
-def _decode_ballistic(udp, x):
-    """Decode an ``mga`` decision vector.
-
-    Args:
-        udp (pykep.trajopt.mga): The UDP the vector belongs to.
-        x (Sequence[float]): Decision vector.
-
-    Returns:
-        Decoded: The decoded trajectory; flyby geometry follows from the Lambert
-        arcs.
-    """
-    _, dv_flyby, dv_arrival, lamberts, _, tof, arcs, epochs = udp._compute_dvs(x)
-    return Decoded(
-        leg_tof_days=[float(t) for t in tof],
-        leg_dsm_ms=[],
-        flyby_mismatch_ms=[float(d) for d in dv_flyby],
-        lamberts=lamberts,
-        arc_states=arcs,
-        arc_epochs=[float(e) for e in epochs],
-        capture_dv_ms=float(dv_arrival) if udp.orbit_insertion else None,
+        chemical=dict(isp_s=CHEM['isp_s'], wet_mass_kg=CHEM['wet_mass_kg'],
+                      departure_perigee_alt_km=CHEM['departure_perigee_alt_km'],
+                      burns=b['burns'], propellant_kg=b['propellant_kg'],
+                      final_mass_kg=b['final_mass_kg']),
     )
 
 
@@ -333,21 +397,21 @@ def _build_nep(setup, multi_objective):
 DFD_SPACECRAFT = {
     name: lowthrust.Spacecraft(
         engine=lowthrust.ENGINES[engine],
-        wet_mass_kg=20000.0,        # launcher: 20 t to TLI, taken as Earth escape
+        wet_mass_kg=mission.LAUNCH_MASS_KG,   # launcher: 20 t to Earth escape
         min_final_mass_kg=10000.0,  # everything that is not propellant
-        launch_c3_km2s2=0.0,        # C3 = 0: no launch v-infinity genes
+        launch_c3_km2s2=mission.LAUNCH_C3_KM2S2,   # C3 = 0: no launch v-infinity genes
         n_seg=10,                   # Sims-Flanagan segments per leg
         flyby_vinf_max_kms=20.0,
         arrival_vinf_max_kms=4.0,   # top of the capture table; arrivals end up slow
-        periapsis_radii=mission.BODIES['N']['lowthrust_orbit']['periapsis_radii'],
-        apoapsis_km=mission.BODIES['N']['lowthrust_orbit']['apoapsis_km'],
+        periapsis_radii=mission.BODIES['N']['target_orbit']['periapsis_radii'],
+        apoapsis_km=mission.BODIES['N']['target_orbit']['apoapsis_km'],
         capture_eta=0.2,            # Q-law coasting cut: 0 = fastest, more = less propellant
         capture_kswitch=5.0,
         high_fidelity=False)
     for name, engine in (('dfd', 'dfd-2mw'), ('dfd-1mw', 'dfd-1mw'))}
 
 # Total cruise bounds for the fusion models (1.9 .. 15 yr); the capture spiral
-# comes on top. Far shorter than the chemical models' 8-33 yr.
+# comes on top. Far shorter than the chemical model's 8-33 yr.
 DFD_TOF_DAYS = [700.0, 5500.0]
 
 
@@ -426,36 +490,40 @@ def _decode_dfd(udp, x):
 
 
 # ---------------------------------------------------------------- registry --
-# ``objective`` is the model's own provenance; the destination's capture
-# parameters are recorded per run by ``search.run_settings`` since they belong
-# to the body, not the model.
+# ``objective`` is the model's own provenance; the destination's target orbit
+# is recorded per run by ``search.run_settings`` since it belongs to the body.
+_TARGET = mission.BODIES['N']['target_orbit']
+_ORBIT = (f"{_TARGET['periapsis_radii'] * mission.BODIES['N']['radius'] / 1e3:,.0f} x "
+          f"{_TARGET['apoapsis_km']:,.0f} km Neptune orbit")
 MODELS = {m.name: m for m in (
-    Model(name='capture',
-          label='Delta-V — deep-space maneuvers + capture',
-          units='m/s',
-          blurb='Chemical: deep-space maneuvers plus a capture burn into a loose capture ellipse',
-          objective=dict(kind='orbit_insertion'),
-          build=_build_capture, decode=_decode_capture),
-    Model(name='ballistic',
-          label='Departure Delta-V (launch energy)',
-          units='m/s',
-          blurb='Trident-style: gravity assists only, no deep-space maneuvers, flyby arrival',
-          objective=dict(kind='launch_dv_flyby'),
-          build=_build_ballistic, decode=_decode_ballistic),
+    Model(name='chem',
+          label='Propellant',
+          counts=f"departure burn + deep-space maneuvers + insertion, Isp {CHEM['isp_s']:g} s",
+          units='kg',
+          blurb=(f"Chemical, Isp {CHEM['isp_s']:g} s, {CHEM['wet_mass_kg'] / 1000:g} t at Earth escape: "
+                 f"burn at {CHEM['departure_perigee_alt_km']:g} km perigee, one deep-space maneuver per leg, "
+                 f"unpowered flybys, periapsis burn into a {_ORBIT}"),
+          objective=dict(kind='chemical_propellant', **CHEM),
+          build=_build_chem, decode=_decode_chem,
+          cost_of=lambda f: chem_propellant_kg(f[0]),   # the search minimises total delta-v
+          launch_vinf_kms=[0.0, CHEM['vinf_max_kms']],
+          assumptions=dict(CHEM)),
     Model(name='nep',
           label='Propellant mass',
+          counts='GMAT seed only',
           units='kg',
           blurb='40 kWe nuclear-electric propulsion (low thrust); GMAT seed only',
           objective=dict(kind='max_final_mass', **NEP_PARAMS),
           build=_build_nep, constrained=True,
+          launch_vinf_kms=[0.0, NEP_PARAMS['vinf_dep']],
           cost_of=lambda f: float(NEP_PARAMS['wet_mass'] + f[0])),
     *(Model(name=name,
-            label='Propellant — cruise + low-thrust capture',
+            label='Propellant',
+            counts=f"cruise thrust + capture spiral, {sc.engine.thrust_n:g} N @ {sc.engine.isp_s:,.0f} s",
             units='kg',
-            blurb=(f"Direct Fusion Drive {sc.engine.thrust_n:g} N @ {sc.engine.isp_s:g} s, "
-                   f"{sc.wet_mass_kg / 1000:g} t at Earth escape; continuous thrust (Sims-Flanagan) "
-                   f"with gravity assists, Q-law spiral into a {sc.periapsis_radii:g} R x "
-                   f"{sc.apoapsis_km / 1000:.0f} 000 km orbit"),
+            blurb=(f"Direct Fusion Drive {sc.engine.thrust_n:g} N @ {sc.engine.isp_s:,.0f} s, "
+                   f"{sc.wet_mass_kg / 1000:g} t at Earth escape: continuous thrust (Sims-Flanagan) "
+                   f"with unpowered flybys, low-thrust spiral into a {_ORBIT}"),
             objective=dict(kind='lowthrust_capture_propellant', **sc.record()),
             build=_build_dfd(name), decode=_decode_dfd,
             constrained=True, penalty='weighted', local='ipopt', polish_scale=sc.wet_mass_kg,
@@ -513,7 +581,7 @@ def build(name, sequence, launch_window=None, tof_days=None, multi_objective=Fal
             Defaults to False.
 
     Returns:
-        object: The unwrapped pykep UDP (``mga_1dsm``, ``mga`` or
+        object: The unwrapped UDP (``ChemUDP``, ``MgaLowThrust`` or
         ``mga_lt_nep``); ``problem()`` gives an optimiser-ready version.
     """
     model = get(name)

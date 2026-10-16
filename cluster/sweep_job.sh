@@ -7,7 +7,7 @@
 set -euo pipefail
 cd /scratch/user/juandurante/git/trajectory-analysis
 export PYTHON=/home/juandurante/miniconda3/envs/orbital_env/bin/python
-export MODELS="capture ballistic"
+export MODELS="chem"
 export WORKERS=8
 export PYTHONUNBUFFERED=1                 # live per-slice progress in results/<model>/logs/
 export JOBS=$(( $(nproc) / WORKERS ))     # 128 cores -> 16 sequences at once

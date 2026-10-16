@@ -1,6 +1,6 @@
 """Find the cheapest trajectory for one model and sequence.
 
-Example: ``python orbit_planning/optimize.py --model ballistic --sequence EJN``;
+Example: ``python orbit_planning/optimize.py --model chem --sequence EJN``;
 ``--sweep`` runs one search per launch slice. Constrained models (``dfd``) are
 searched with the constraints folded into a penalty and polished on the true
 constrained problem; their champions are ranked feasible-first. Run it as a script, never from a
@@ -49,12 +49,10 @@ def optimise_champion(args, launch_window=None, log=print):
                                       args.rounds, args.seed, log)
     cost, x, island = search.best_champion(archi)
     log("island champions: " + ", ".join(f"{f[0]:.0f}" for f in archi.get_champions_f()))
-    log(f"best of archipelago : {cost:9.0f}  (island {island}{', penalised' if model.constrained else ''})")
+    log(f"best of archipelago : {cost:9.0f}  (search objective, island {island}{', penalised' if model.constrained else ''})")
 
     window = launch_window or mission.LAUNCH_WINDOW
-    raw = dict(models.evaluate(args.model, args.sequence, x, window), x=x)
-    if not model.constrained:
-        raw['cost'] = cost   # the archipelago's own objective, as before
+    raw = dict(models.evaluate(args.model, args.sequence, x, window), x=x)   # the model's cost
     r = search.polish_job(dict(model=args.model, sequence=args.sequence, x=x,
                                window_mjd2000=[window[0].mjd2000, window[1].mjd2000],
                                tof_days=None, maxeval=args.polish_maxeval, stop=args.polish_stop))
@@ -97,8 +95,7 @@ def sweep(args, slices_out):
                                              args.rounds, args.seed, log=search.silent)
         cost, x, _ = search.best_champion(archi)
         score = models.evaluate(args.model, args.sequence, x, window)
-        if models.get(args.model).constrained:
-            cost = score['cost']   # the true objective, not the penalised one
+        cost = score['cost']   # the model's cost on the true problem, not the search objective
         champions.append(dict(slice=i, window_mjd2000=[window[0].mjd2000, window[1].mjd2000],
                               raw_cost=cost, cost=cost, x=x, feasible=score['feasible'],
                               violation=score['violation'], wall_seconds=round(wall, 1)))

@@ -59,21 +59,23 @@ def describe(model_name, sequence, x):
     """Decode one trajectory into a JSON-serialisable mission description.
 
     Args:
-        model_name (str): Name of a decodable model: ``capture``, ``ballistic``
-            or a low-thrust model (``dfd``, ``dfd-1mw``).
+        model_name (str): Name of a decodable model (``chem``, ``dfd``,
+            ``dfd-1mw``).
         sequence (str): Sequence string the vector was optimised for.
         x (list[float]): Decision vector.
 
     Returns:
-        dict: Sections ``cost``, ``launch`` (epoch, C3, vinf, launch-asymptote
-        RA/dec in EME2000), ``legs``, ``flybys``, ``arrival`` (vinf, capture burn,
-        entry speed), ``totals`` and ``arcs``. Each ``arcs`` entry holds the
-        ``r``, ``v``, ``dt`` and ``mu`` a Kepler propagator needs to rebuild that
-        ballistic arc. Low-thrust models add a ``lowthrust`` section (masses,
-        spacecraft, capture spiral, constraint residuals), per-leg
-        ``impulses``, and in ``legs[i].dsm_ms`` the leg's total thrust delta-v;
-        their arcs are the Sims-Flanagan coasts between impulses, and
-        ``totals.tof_days`` includes the capture spiral.
+        dict: Sections ``cost``, ``launch`` (epoch, the spacecraft's departure
+        C3 and vinf, launch-asymptote RA/dec in EME2000), ``legs``, ``flybys``,
+        ``arrival`` (vinf, target orbit, probe entry speed), ``budget`` (every
+        burn or thrust phase with its delta-v, propellant and the mass left,
+        split into ``to_destination`` and ``insertion``), ``totals`` and
+        ``arcs``. Each ``arcs`` entry holds the ``r``, ``v``, ``dt`` and ``mu`` a
+        Kepler propagator needs to rebuild that ballistic arc. Low-thrust
+        models add a ``lowthrust`` section (spacecraft, capture spiral,
+        constraint residuals) and per-leg ``impulses``; their arcs are the
+        Sims-Flanagan coasts between impulses, and ``totals.tof_days``
+        includes the capture spiral.
 
     Raises:
         NotImplementedError: If the model has no decoder.
@@ -122,7 +124,7 @@ def describe(model_name, sequence, x):
     description = {
         'cost': cost,
         'launch': dict(epoch_mjd2000=float(x[0]), date=_date(x[0]),
-                       vinf_ms=vinf_dep_mag, c3_km2s2=(vinf_dep_mag / 1000.0) ** 2,
+                       launcher_c3_km2s2=mission.LAUNCH_C3_KM2S2, vinf_ms=vinf_dep_mag, c3_km2s2=(vinf_dep_mag / 1000.0) ** 2,
                        vinf_vec_eclip_ms=[float(c) for c in vinf_dep],
                        rla_deg=rla, dla_deg=dla),
         'legs': legs,
@@ -139,6 +141,12 @@ def describe(model_name, sequence, x):
                        flyby_mismatch_total_ms=float(sum(decoded.flyby_mismatch_ms))),
         'arcs': arcs,
     }
+    orbit = setup.destination['target_orbit']
+    description['arrival'].update(
+        orbit_periapsis_km=orbit['periapsis_radii'] * setup.destination['radius'] / 1e3,
+        orbit_apoapsis_km=orbit['apoapsis_km'], orbit_date=_date(epochs[-1]))
+    if decoded.chemical is not None:
+        description['budget'] = _chemical_budget(decoded.chemical, setup.labels, vinf_dep_mag)
     if decoded.lowthrust is not None:
         lt = dict(decoded.lowthrust)
         for leg, imps in zip(legs, lt.pop('impulses')):
@@ -148,7 +156,6 @@ def describe(model_name, sequence, x):
         cap = lt['capture']
         description['arrival'].update(
             capture_dv_ms=cap['dv_ms'], capture_spiral_days=cap['days'],
-            orbit_periapsis_km=cap['periapsis_km'], orbit_apoapsis_km=cap['apoapsis_km'],
             final_mass_kg=lt['final_mass_kg'],
             orbit_epoch_mjd2000=float(epochs[-1]) + cap['days'],
             orbit_date=_date(float(epochs[-1]) + cap['days']))
@@ -157,4 +164,53 @@ def describe(model_name, sequence, x):
             tof_days=total_tof + cap['days'], tof_years=(total_tof + cap['days']) / 365.25,
             cruise_days=total_tof)
         description['lowthrust'] = lt
+        description['budget'] = _lowthrust_budget(lt, legs, float(epochs[-1]))
     return description
+
+
+def _budget(wet_mass_kg, events):
+    """Total a list of burn events into a ``budget`` section."""
+    def total(phase):
+        """Sum the delta-v, propellant and days of one phase."""
+        chosen = [e for e in events if e['phase'] == phase]
+        return dict(dv_ms=sum(e['dv_ms'] for e in chosen),
+                    propellant_kg=sum(e['propellant_kg'] for e in chosen),
+                    days=sum(e.get('days', 0.0) for e in chosen))
+    final = events[-1]['mass_after_kg'] if events else wet_mass_kg
+    return dict(wet_mass_kg=wet_mass_kg, final_mass_kg=final,
+                propellant_kg=wet_mass_kg - final, events=events,
+                to_destination=total('to_destination'), insertion=total('insertion'))
+
+
+def _chemical_budget(chem, labels, vinf_dep_ms):
+    """Budget of a chemical trajectory: departure burn, deep-space maneuvers, insertion."""
+    events = []
+    for burn in chem['burns']:
+        if burn['kind'] == 'departure':
+            label = (f"departure burn at {chem['departure_perigee_alt_km']:g} km perigee "
+                     f"(to v\u221e {vinf_dep_ms / 1000:.2f} km/s)")
+        elif burn['kind'] == 'dsm':
+            i = burn['leg']
+            label = f"deep-space maneuver, {labels[i]} \u2192 {labels[i + 1]}"
+        else:
+            label = f"{labels[-1]} orbit insertion (periapsis burn)"
+        events.append(dict(label=label, date=_date(burn['epoch_mjd2000']), dv_ms=burn['dv_ms'],
+                           propellant_kg=burn['propellant_kg'], mass_after_kg=burn['mass_after_kg'],
+                           phase='insertion' if burn['kind'] == 'insertion' else 'to_destination'))
+    return dict(_budget(chem['wet_mass_kg'], events), isp_s=chem['isp_s'])
+
+
+def _lowthrust_budget(lt, legs, arrival_mjd2000):
+    """Budget of a low-thrust trajectory: thrust per leg, then the capture spiral."""
+    events, mass = [], lt['wet_mass_kg']
+    for leg, end in zip(legs, lt['leg_end_mass_kg']):
+        events.append(dict(label=f"thrust, {leg['from']} \u2192 {leg['to']} ({leg['tof_days']:.0f} d)",
+                           date=leg['dep_date'], dv_ms=leg['dsm_ms'], propellant_kg=mass - end,
+                           mass_after_kg=end, phase='to_destination'))
+        mass = end
+    cap = lt['capture']
+    events.append(dict(label=f"{legs[-1]['to']} capture spiral ({cap['days']:.0f} d)",
+                       date=_date(arrival_mjd2000), dv_ms=cap['dv_ms'],
+                       propellant_kg=mass - lt['final_mass_kg'], mass_after_kg=lt['final_mass_kg'],
+                       days=cap['days'], phase='insertion'))
+    return dict(_budget(lt['wet_mass_kg'], events), isp_s=lt['spacecraft']['isp_s'])

@@ -1,6 +1,17 @@
 // Index page, "Best by trip time" tab: each model's combined Pareto front over
-// every published sequence (docs/data/<model>/fronts.json, built by fronts.py).
-// Plotly loads only when the tab is first opened, so the gallery stays light.
+// every published sequence (docs/data/<model>/fronts.json, built by fronts.py),
+// or every model's front on one chart. Plotly loads only when the tab is first
+// opened, so the gallery stays light.
+
+const ALL = '*';
+const HELP = {
+  model: 'Step line: for each trip time, the least propellant any sequence needs (the combined ' +
+         'Pareto front of this model). Coloured points: the sequences that win the widest time ' +
+         'ranges; grey: other sequences\' own fronts. Click a point to open the trajectory.',
+  all: 'One step line per model: for each trip time, the least propellant that model needs over ' +
+       'every published sequence. Same launch and end orbit for all, so the lines compare directly. ' +
+       'Click a point to open the trajectory.',
+};
 
 const fronts = { models: [], loaded: {}, plotlyReady: null, bound: false };
 
@@ -32,16 +43,17 @@ async function openFronts() {
   try {
     const [runs] = await Promise.all([loadJSON('data/index.json'), loadPlotly()]);
     if (!fronts.bound) {
-      fronts.models = [...new Set(runs.map(run => run.model))]
+      fronts.models = [...new Set(liveRuns(runs).map(run => run.model))]
         .sort((a, b) => modelRank(a) - modelRank(b) || a.localeCompare(b));   // gallery.js order
       const select = document.getElementById('frontModel');
+      if (fronts.models.length > 1) select.add(new Option('all models', ALL));
       fronts.models.forEach(model => select.add(new Option(model, model)));
       const saved = sessionStorageGet('frontModel');
-      if (saved && fronts.models.includes(saved)) select.value = saved;
-      select.onchange = () => { sessionStorageSet('frontModel', select.value); drawFronts(select.value); };
+      if (saved && [ALL, ...fronts.models].includes(saved)) select.value = saved;
+      select.onchange = () => { sessionStorageSet('frontModel', select.value); show(select.value); };
       fronts.bound = true;
     }
-    await drawFronts(document.getElementById('frontModel').value);
+    await show(document.getElementById('frontModel').value);
   } catch (error) {
     plot.innerHTML = `<p class="placeholder">Could not load the fronts (${error.message}).</p>`;
   }
@@ -50,27 +62,98 @@ async function openFronts() {
 function sessionStorageGet(key) { try { return sessionStorage.getItem(key); } catch { return null; } }
 function sessionStorageSet(key, value) { try { sessionStorage.setItem(key, value); } catch { /* private mode */ } }
 
+const years = d => d / 365.25;
+const openUrl = (model, seq, id) => `sequence.html?model=${encodeURIComponent(model)}` +
+  `&seq=${encodeURIComponent(seq)}&pt=${encodeURIComponent(id)}`;
+
+async function loadFront(model) {
+  if (!(model in fronts.loaded)) {
+    fronts.loaded[model] = await loadJSON(`data/${model}/fronts.json`).catch(() => null);
+  }
+  return fronts.loaded[model];
+}
+
+// Clear a placeholder message, but never the live chart: Plotly keeps state on
+// the element and would "update" a chart whose DOM had been removed.
+function preparePlot() {
+  const plot = document.getElementById('frontPlot');
+  if (plot.querySelector('.placeholder')) plot.innerHTML = '';
+  return plot;
+}
+
+// Plotly adds .on() to the element on its first plot, so bind after drawing.
+function bindClicks(plot) {
+  if (!plot.dataset.clickBound) {
+    plot.on('plotly_click', event => {
+      const [model, seq, id] = event.points[0].customdata || [];
+      if (seq) location.href = openUrl(model, seq, id);
+    });
+    plot.dataset.clickBound = '1';
+  }
+}
+
+function layoutFor(t, yTitle, extra = {}) {
+  return {
+    paper_bgcolor: t.surface, plot_bgcolor: t.surface, font: { color: t.ink2 },
+    margin: { l: 70, r: 10, t: 10, b: 50 }, hovermode: 'closest',
+    xaxis: { title: 'Time of flight, launch → in orbit (years)', gridcolor: t.grid, zeroline: false },
+    yaxis: { title: yTitle, gridcolor: t.grid, zeroline: false },
+    legend: { orientation: 'h', y: 1.08, x: 0 }, ...extra,
+  };
+}
+
+async function show(choice) {
+  document.getElementById('frontHelp').textContent = choice === ALL ? HELP.all : HELP.model;
+  return choice === ALL ? drawAll() : drawFronts(choice);
+}
+
+// Every model's combined front on one chart (all costs are propellant, kg).
+async function drawAll() {
+  const t = theme();
+  const loaded = (await Promise.all(fronts.models.map(loadFront)))
+    .map((data, i) => [fronts.models[i], data]).filter(([, data]) => data);
+  const plot = preparePlot();
+  const traces = [], rows = [];
+  loaded.forEach(([model, data], i) => {
+    const best = data.points.filter(p => p.best).sort((a, b) => a.tof_days - b.tof_days);
+    if (!best.length) return;
+    const color = i < 3 ? t.cat[i] : t.catOther;
+    traces.push({
+      type: 'scatter', mode: 'lines+markers', name: model,
+      x: best.map(p => years(p.tof_days)), y: best.map(p => p.cost),
+      line: { shape: 'hv', color, width: 2 }, marker: { size: 6, color },
+      customdata: best.map(p => [model, p.seq, p.id]), hoverinfo: 'text',
+      text: best.map(p => `<b>${model}</b> · ${p.seq}<br>${fmtCost(p.cost, data.cost_units)}<br>` +
+                          `${years(p.tof_days).toFixed(2)} yr`),
+    });
+    const cheapest = best.reduce((a, b) => (b.cost < a.cost ? b : a));
+    const fastest = best[0];
+    const cell = p => `${fmtCost(p.cost, data.cost_units)} · ${years(p.tof_days).toFixed(1)} yr · ` +
+                      `<a href="${openUrl(model, p.seq, p.id)}">${p.seq}</a>`;
+    rows.push(`<tr><td><span class="swatch" style="background:${color}"></span>${model}</td>
+      <td>${data.counts || ''}</td><td class="num">${cell(cheapest)}</td><td class="num">${cell(fastest)}</td></tr>`);
+  });
+  Plotly.react(plot, traces, layoutFor(t, 'Propellant (kg)'), { displayModeBar: false, responsive: true });
+  bindClicks(plot);
+  document.getElementById('frontNote').textContent = `${traces.length} models`;
+  document.getElementById('frontTable').innerHTML =
+    `<tr><th>model</th><th>cost counts</th><th class="num">least propellant</th><th class="num">fastest</th></tr>${rows.join('')}`;
+}
+
 async function drawFronts(model) {
   const plot = document.getElementById('frontPlot');
   const table = document.getElementById('frontTable');
-  let data = fronts.loaded[model];
+  const data = await loadFront(model);
   if (!data) {
-    try {
-      data = fronts.loaded[model] = await loadJSON(`data/${model}/fronts.json`);
-    } catch {
-      Plotly.purge(plot);
-      plot.innerHTML = `<p class="placeholder">No combined front for <b>${model}</b> yet: run
-        <code>python orbit_planning/fronts.py</code> (or publish.py) and commit docs/data.</p>`;
-      table.innerHTML = '';
-      document.getElementById('frontNote').textContent = '';
-      return;
-    }
+    Plotly.purge(plot);
+    plot.innerHTML = `<p class="placeholder">No combined front for <b>${model}</b> yet: run
+      <code>python orbit_planning/fronts.py</code> (or publish.py).</p>`;
+    table.innerHTML = '';
+    document.getElementById('frontNote').textContent = '';
+    return;
   }
-  // Clear a placeholder message, but never the live chart: Plotly keeps state on
-  // the element and would "update" a chart whose DOM had been removed.
-  if (plot.querySelector('.placeholder')) plot.innerHTML = '';
+  preparePlot();
   const t = theme();
-  const years = d => d / 365.25;
   const best = data.points.filter(p => p.best).sort((a, b) => a.tof_days - b.tof_days);
   const rest = data.points.filter(p => !p.best);
 
@@ -97,7 +180,7 @@ async function drawFronts(model) {
   const traces = [{
     type: 'scattergl', mode: 'markers', name: "other sequences' fronts",
     x: rest.map(p => years(p.tof_days)), y: rest.map(p => p.cost),
-    customdata: rest.map(p => [p.seq, p.id]), text: rest.map(hover), hoverinfo: 'text',
+    customdata: rest.map(p => [model, p.seq, p.id]), text: rest.map(hover), hoverinfo: 'text',
     marker: { size: 5, color: t.ink2, opacity: 0.22 },
   }, {
     type: 'scatter', mode: 'lines', name: 'best by trip time', line: { shape: 'hv', color: t.ink2, width: 1.5 },
@@ -110,7 +193,7 @@ async function drawFronts(model) {
     traces.push({
       type: 'scatter', mode: 'markers', name: group,
       x: pts.map(p => years(p.tof_days)), y: pts.map(p => p.cost),
-      customdata: pts.map(p => [p.seq, p.id]), text: pts.map(hover), hoverinfo: 'text',
+      customdata: pts.map(p => [model, p.seq, p.id]), text: pts.map(hover), hoverinfo: 'text',
       marker: { size: 10, color: group === 'other winners' ? t.catOther : colorOf(group),
                 line: { width: 2, color: t.surface } },
     });
@@ -122,33 +205,19 @@ async function drawFronts(model) {
     yshift: 14, xanchor: 'left', font: { size: 11, color: t.ink2 },
   }));
 
-  Plotly.react(plot, traces, {
-    paper_bgcolor: t.surface, plot_bgcolor: t.surface, font: { color: t.ink2 },
-    margin: { l: 70, r: 10, t: 10, b: 50 }, hovermode: 'closest',
-    xaxis: { title: 'Time of flight (years)', gridcolor: t.grid, zeroline: false },
-    yaxis: { title: `${data.cost_label} (${units})`, gridcolor: t.grid, zeroline: false },
-    legend: { orientation: 'h', y: 1.08, x: 0 }, annotations,
-  }, { displayModeBar: false, responsive: true });
-  if (!plot.dataset.clickBound) {
-    plot.on('plotly_click', event => {
-      const [seq, id] = event.points[0].customdata || [];
-      if (seq) location.href = `sequence.html?model=${encodeURIComponent(fronts.current)}` +
-                               `&seq=${encodeURIComponent(seq)}&pt=${encodeURIComponent(id)}`;
-    });
-    plot.dataset.clickBound = '1';
-  }
-  fronts.current = model;
+  Plotly.react(plot, traces, layoutFor(t, `${data.cost_label} (${units})`, { annotations }),
+               { displayModeBar: false, responsive: true });
+  bindClicks(plot);
 
   document.getElementById('frontNote').textContent =
-    `${data.runs.length} sequences · ${best.length} points on the combined front`;
+    `${data.counts ? data.counts + ' · ' : ''}${data.runs.length} sequences · ${best.length} points on the front`;
   const rows = spans.map(s => {
     const cheapest = s.points.reduce((a, b) => (b.cost < a.cost ? b : a));
     const range = s.from === s.to ? `${years(s.from).toFixed(1)} yr`
                                   : `${years(s.from).toFixed(1)}–${years(s.to).toFixed(1)} yr`;
     return `<tr><td><span class="swatch" style="background:${colorOf(s.seq)}"></span>${s.seq}</td>
       <td>${range}</td><td class="num">${fmtCost(cheapest.cost, units)}</td>
-      <td><a href="sequence.html?model=${encodeURIComponent(model)}&seq=${encodeURIComponent(s.seq)}` +
-      `&pt=${encodeURIComponent(cheapest.id)}">open</a></td></tr>`;
+      <td><a href="${openUrl(model, s.seq, cheapest.id)}">open</a></td></tr>`;
   }).join('');
-  table.innerHTML = `<tr><th>sequence</th><th>wins for time of flight</th><th>cheapest there</th><th></th></tr>${rows}`;
+  table.innerHTML = `<tr><th>sequence</th><th>best for trip times</th><th class="num">least propellant there</th><th></th></tr>${rows}`;
 }
