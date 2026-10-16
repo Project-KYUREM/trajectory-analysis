@@ -30,6 +30,50 @@ async function loadJSON(url) {
   return response.json();
 }
 
+// Fetch a file that publish.py gzipped. Servers that already decode it
+// (Content-Encoding: gzip) hand back plain bytes, so check the gzip magic
+// number before decompressing.
+async function loadGz(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) return bytes.buffer;
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return new Response(stream).arrayBuffer();
+}
+
+// One run's payload (see orbit_planning/sitedata.py): metadata in cloud.json,
+// points as gzipped binary columns, trajectory descriptions as gzipped JSON.
+// Runs still in the old single-file cloud.json are returned as they are.
+async function loadCloud(dir) {
+  const cloud = await loadJSON(`${dir}/cloud.json`);
+  if (Array.isArray(cloud.points)) return cloud;
+  const head = cloud.points_file;
+  const [buffer, detail] = await Promise.all([
+    loadGz(`${dir}/${head.name}`),
+    loadGz(`${dir}/${cloud.detail_file}`).then(b => JSON.parse(new TextDecoder().decode(b))),
+  ]);
+  const types = { '<f8': Float64Array, '<f4': Float32Array, '<u4': Uint32Array, u1: Uint8Array };
+  const cols = {};
+  let offset = 0;
+  head.columns.forEach(([name, dtype]) => {
+    const Type = types[dtype];
+    cols[name] = new Type(buffer, offset, head.n);
+    offset += Type.BYTES_PER_ELEMENT * head.n;
+  });
+  const flag = head.flags;
+  const points = new Array(head.n);
+  for (let i = 0; i < head.n; i++) {
+    const f = cols.flags[i];
+    points[i] = {
+      id: 'p' + String(cols.index[i]).padStart(5, '0'),
+      cost: cols.cost[i], tof_days: cols.tof_days[i], launch_mjd2000: cols.launch_mjd2000[i],
+      pareto: !!(f & flag.pareto), polished: !!(f & flag.polished), detail: !!(f & flag.detail),
+    };
+  }
+  return { ...cloud, points, detail };
+}
+
 function download(name, text) {
   const link = document.createElement('a');
   link.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));

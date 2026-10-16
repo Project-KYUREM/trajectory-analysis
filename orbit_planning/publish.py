@@ -1,8 +1,8 @@
 """Compact raw results into the static site payload under ``docs/data/``.
 
-Each run becomes ``docs/data/<model>/<sequence>/cloud.json``: every point of
-the cloud, a ``trajectory.describe()`` for each point flagged ``detail``, and
-the ECLIPJ2000 to EME2000 rotation. ``planets.json`` (orbit polylines shared
+Each run becomes ``docs/data/<model>/<sequence>/``: every point of the cloud
+as compact binary columns, a ``trajectory.describe()`` for each point flagged
+``detail``, and the ECLIPJ2000 to EME2000 rotation (format: ``sitedata.py``). ``planets.json`` (orbit polylines shared
 by all runs) and ``index.json`` (the gallery manifest) are written alongside
 (runs published earlier stay listed unless ``--replace-index``), then
 ``fronts.py`` builds each model's combined front (``fronts.json``).
@@ -17,6 +17,7 @@ import fronts
 import mission
 import models
 import paths
+import sitedata
 import trajectory
 
 # Decimal places per JSON key; lists inherit the key of their parent.
@@ -121,7 +122,7 @@ def planet_orbits(labels, samples=160):
 
 
 def publish_run(model_name, sequence):
-    """Compact one raw result into its ``cloud.json``.
+    """Compact one raw result into its site payload (``sitedata.write_run``).
 
     Args:
         model_name (str): Model of the run.
@@ -157,19 +158,19 @@ def publish_run(model_name, sequence):
                 detail[p['id']] = {'error': str(exc)}
         del p['x']
 
-    cloud = dict(model=model_name, sequence=sequence, labels=raw['labels'],
-                 cost_label=model.label, cost_units=model.units, blurb=model.blurb,
-                 settings=raw.get('settings', {}),
-                 frames=dict(eclip_to_eme=trajectory.ECLIP_TO_EME.tolist()),
-                 points=points, detail=detail)
-    (paths.docs_run_dir(model_name, sequence) / 'cloud.json').write_text(
-        json.dumps(compact(cloud), separators=(',', ':')))
+    meta = dict(model=model_name, sequence=sequence, labels=raw['labels'],
+                cost_label=model.label, cost_units=model.units, blurb=model.blurb,
+                settings=raw.get('settings', {}),
+                frames=dict(eclip_to_eme=trajectory.ECLIP_TO_EME.tolist()))
+    size = sitedata.write_run(paths.docs_run_dir(model_name, sequence), compact(meta),
+                              points, compact(detail))
 
     front = [p for p in points if p['pareto']]
     best = min(front, key=lambda p: p['cost'])
     return dict(model=model_name, sequence=sequence, labels=raw['labels'],
                 cost_label=model.label, cost_units=model.units,
                 n_points=len(points), n_front=len(front), n_detail=len(detail),
+                size_mb=round(size / 1e6, 2),
                 best_cost=best['cost'], best_tof_years=best['tof_days'] / 365.25,
                 path=f"data/{model_name}/{sequence}/cloud.json")
 
@@ -228,10 +229,12 @@ def main():
             continue
         published.append(entry)
         print(f"published {model_name}/{sequence}: {entry['n_points']} pts, {entry['n_front']} front, "
-              f"{entry['n_detail']} detailed, best {entry['best_cost']:.0f} {entry['cost_units']}")
+              f"{entry['n_detail']} detailed, best {entry['best_cost']:.0f} {entry['cost_units']}, "
+              f"{entry['size_mb']:.2f} MB")
 
     paths.DOCS_DATA_DIR.mkdir(parents=True, exist_ok=True)
     index, kept = merge_index(published, replace=args.replace_index)
+    sitedata.convert_all()   # runs kept from earlier publishes, still in the old single-file format
     labels = {label for entry in index for label in entry['labels']}
     (paths.DOCS_DATA_DIR / 'planets.json').write_text(
         json.dumps(compact(planet_orbits(labels)), separators=(',', ':')))

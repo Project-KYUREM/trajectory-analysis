@@ -29,9 +29,32 @@ python orbit_planning/batch.py --models capture,ballistic \
 #    (also builds each model's combined front, docs/data/<model>/fronts.json)
 python orbit_planning/publish.py
 
-# 3. view: any static server; GitHub Pages serves docs/ directly
+# 3. view locally: any static server
 python -m http.server -d docs 8899
+
+# 4. deploy: push docs/ (site + data) to the gh-pages branch as one snapshot
+scripts/deploy_site.sh
 ```
+
+**Site data.** `docs/data/` is generated and not committed to `main`. Each
+run is `cloud.json` (metadata), `points.bin.gz` (every point of the cloud as
+binary columns: launch, cost, time of flight, raw index, flags) and
+`detail.json.gz` (trajectory descriptions); the format is documented in
+`orbit_planning/sitedata.py`, and the page decompresses it in the browser.
+A chemical run with 66 000 points is ~1.3 MB instead of ~11 MB as plain
+JSON, with nothing dropped. Older single-file runs still load, and
+`python orbit_planning/sitedata.py` (or any publish) converts them in place.
+Publishing merges into the existing index, so runs published earlier (from
+another machine) stay listed while their files remain in `docs/data/`.
+
+**Deploying.** `scripts/deploy_site.sh` commits a copy of `docs/` into a
+fresh, parent-less commit and force-pushes it to `gh-pages`, so that branch
+always holds exactly one snapshot and the repository does not grow with
+each publish. One-time setup: GitHub → Settings → Pages → Deploy from a
+branch → `gh-pages`, `/ (root)`. `DRY_RUN=1` builds the snapshot without
+pushing. Because the data lives only in `docs/data/` on the machine that
+publishes, deploy from that machine (the cluster checkout, after
+`publish.py`).
 
 Single runs: `python orbit_planning/optimize.py --model ballistic --sequence EJN`
 finds the one cheapest trajectory (its `champion.json` feeds the notebook, not
@@ -203,6 +226,8 @@ drawn as the coasts between Sims-Flanagan impulses).
 | `orbit_planning/sequence_sweep.py` | run an array of sequences for one model and rank them |
 | `scripts/run_dfd_sweep.sh` | the 77-sequence DFD sweep, many sequences in parallel on one machine |
 | `orbit_planning/publish.py`     | raw results → `docs/data/` |
+| `orbit_planning/sitedata.py`    | the compact per-run site format (write, read, convert old runs) |
+| `scripts/deploy_site.sh`        | push `docs/` (site + data) to `gh-pages` as one replaced snapshot |
 | `orbit_planning/fronts.py`      | each model's combined Pareto front over all sequences → `docs/data/<model>/fronts.json` (the "Best by trip time" tab; kernel-free, rerunnable on its own) |
 | `orbit_planning/porkchop.py`    | static PNG of one run's cloud |
 | `orbit_planning/slingshot_planning.py` | notebook for poking at one champion |

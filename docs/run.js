@@ -28,7 +28,7 @@ async function main() {
   select.onchange = () => { location.search = `?model=${select.value}&seq=${state.seq}`; };
 
   [state.cloud, state.planets] = await Promise.all([
-    loadJSON(`data/${state.model}/${state.seq}/cloud.json`),
+    loadCloud(`data/${state.model}/${state.seq}`),
     loadJSON('data/planets.json'),
   ]);
   document.getElementById('crumb').textContent =

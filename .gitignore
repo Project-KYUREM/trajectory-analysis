@@ -222,11 +222,11 @@ __marimo__/
 *.png
 
 # --- kyurem project ---
-# The repo already ignores *.json and *.png globally (above). The compacted
-# site payload lives in docs/data/ and MUST be committed for GitHub Pages, so
-# re-include it explicitly:
-!docs/data/
-!docs/data/**
+# The published site data (docs/data/, written by orbit_planning/publish.py)
+# is NOT committed: scripts/deploy_site.sh pushes docs/ including it to the
+# gh-pages branch as a single replaced snapshot, so main does not grow with
+# every publish.
+docs/data/
 # Raw optimisation output: big (tens of MB/run) and regenerable, NOT committed.
 results/
 # editor / build junk seen in this repo

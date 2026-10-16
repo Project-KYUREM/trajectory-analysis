@@ -5,8 +5,8 @@ points no other sequence beats on both cost and time of flight are flagged:
 for every trip time, the cheapest trajectory any sequence offers. The site's
 "Best by trip time" tab plots it from ``docs/data/<model>/fronts.json``.
 
-It reads only the published ``docs/data/<model>/<sequence>/cloud.json``
-files, not ``results/``, and needs no SPICE kernels, so it runs anywhere::
+It reads only the published runs under ``docs/data`` (via ``sitedata``), not
+``results/``, and needs no SPICE kernels, so it runs anywhere::
 
     python orbit_planning/fronts.py              # every model in index.json
     python orbit_planning/fronts.py --models dfd
@@ -17,6 +17,7 @@ import argparse
 import json
 
 import paths
+import sitedata
 
 # Background (non-winning) front points kept per run: enough to show each
 # sequence's front shape without shipping thousands of chemical-model points.
@@ -69,10 +70,10 @@ def build_model(model, runs):
         cloud_path = paths.DOCS_DIR / run['path']
         if not cloud_path.is_file():
             continue
-        cloud = json.loads(cloud_path.read_text())
+        _meta, points, _detail = sitedata.read_run(cloud_path.parent)
         front = [dict(seq=run['sequence'], id=p['id'], cost=p['cost'], tof_days=p['tof_days'],
                       launch_mjd2000=p['launch_mjd2000'])
-                 for p in cloud['points'] if p.get('pareto')]
+                 for p in points if p.get('pareto')]
         if front:
             pooled.extend(front)
             used.append(dict(sequence=run['sequence'], labels=run['labels'], n_front=len(front)))
