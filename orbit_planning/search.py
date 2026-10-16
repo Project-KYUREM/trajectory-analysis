@@ -21,6 +21,23 @@ def silent(*_args, **_kwargs):
     """Accept any arguments and print nothing, for use as a ``log`` callable."""
 
 
+def size_island_pool(islands):
+    """Make pygmo's ``mp_island`` process pool exactly ``islands`` workers.
+
+    The pool defaults to one worker per logical CPU of the machine. On a
+    128-core node running 16 sequence searches at once that is 2048 workers,
+    of which 128 have work; the idle ones contend for their pool's queue lock
+    and keep the node in kernel time (67 % system, ~1 % user CPU was seen),
+    so no search progresses. One worker per island is all an archipelago uses.
+
+    Args:
+        islands (int): Islands of the archipelago about to run.
+    """
+    pg.mp_island.init_pool(islands)
+    if pg.mp_island.get_pool_size() != islands:
+        pg.mp_island.resize_pool(islands)
+
+
 def run_archipelago(prob, algo, islands, pop_size, rounds, seed=None, log=print):
     """Evolve a ring-topology archipelago and return it with its wall time.
 
@@ -41,6 +58,7 @@ def run_archipelago(prob, algo, islands, pop_size, rounds, seed=None, log=print)
         tuple[pygmo.archipelago, float]: The evolved archipelago and its wall
         time in seconds.
     """
+    size_island_pool(islands)
     kwargs = dict(n=islands, algo=algo, prob=prob, pop_size=pop_size, t=pg.ring())
     if seed is not None:
         kwargs['seed'] = seed
@@ -201,8 +219,11 @@ def polish(prob, x, maxeval=5000, stop=5, perturb=1e-3, local='cobyla', scale=No
     if not unit.feasibility_x(pop.champion_x) and _violation(unit, pop.champion_f) < 1e-3:
         # Close but not inside c_tol: one longer descent from the champion
         # usually finishes the job the MBH hops ran out of iterations for.
+        # IPOPT may leave a gene a hair outside [0, 1] (its bound relaxation),
+        # which pygmo rejects as a starting guess: clip back into the box.
+        start = [min(max(u, 0.0), 1.0) for u in pop.champion_x]
         finish = pg.population(unit)
-        finish.push_back(pop.champion_x, pop.champion_f)
+        finish.push_back(start)
         finish = pg.algorithm(local_algorithm(local, 3 * maxeval)).evolve(finish)
         if unit.feasibility_x(finish.champion_x):
             pop = finish
@@ -229,9 +250,13 @@ def polish_job(job):
     model's local solver; ``feasible`` then reports whether the result meets
     every constraint (always True for unconstrained models).
 
+    A solver error never escapes: it would end the whole pool, and with it a
+    sweep that ran for hours. The seed comes back unpolished instead, with
+    ``error`` set.
+
     Returns:
         dict: ``before``, ``before_feasible``, ``after``, ``x``, ``feasible``,
-        ``violation`` and ``seconds``.
+        ``violation``, ``seconds`` and, after a solver error, ``error``.
     """
     lo, hi = job['window_mjd2000']
     window = [pk.epoch(lo, 'mjd2000'), pk.epoch(hi, 'mjd2000')]
@@ -242,12 +267,19 @@ def polish_job(job):
     before = float(prob.fitness(x0)[0])
     before_feasible = bool(prob.feasibility_x(x0))
     t0 = time.time()
-    after, x = polish(prob, x0, maxeval=job['maxeval'], stop=job['stop'], local=model.local,
-                      scale=model.polish_scale)
+    error = None
+    try:
+        after, x = polish(prob, x0, maxeval=job['maxeval'], stop=job['stop'], local=model.local,
+                          scale=model.polish_scale)
+    except Exception as exc:   # pygmo/IPOPT raise ValueError/RuntimeError
+        after, x, error = before, list(x0), f"{type(exc).__name__}: {str(exc).strip()[:300]}"
     score = models.evaluate(job['model'], job['sequence'], x, window, job.get('tof_days'))
-    return dict(before=before, before_feasible=before_feasible, after=after, x=x,
-                feasible=score['feasible'],
-                violation=score['violation'], seconds=time.time() - t0)
+    result = dict(before=before, before_feasible=before_feasible, after=after, x=x,
+                  feasible=score['feasible'],
+                  violation=score['violation'], seconds=time.time() - t0)
+    if error:
+        result['error'] = error
+    return result
 
 
 def clip(prob, x):

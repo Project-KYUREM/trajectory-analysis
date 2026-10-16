@@ -171,6 +171,11 @@ class Model:
             ``mission.LAUNCH_VINF_KMS``. Defaults to None.
         assumptions (dict, optional): Spacecraft / engine record stored with
             every result. Defaults to None.
+        polish_band (float, optional): Default fractional cruise-time band a
+            Pareto polish pins each seed to (``pareto.py --polish-band``).
+            Defaults to 0.03.
+        polish_pad_days (float, optional): Default launch-date half-window of
+            that polish (``--polish-pad-days``). Defaults to 45 days.
     """
     name: str
     label: str
@@ -187,6 +192,8 @@ class Model:
     tof_days: Optional[list] = None
     launch_vinf_kms: Optional[list] = None
     assumptions: Optional[dict] = None
+    polish_band: float = 0.03
+    polish_pad_days: float = 45.0
 
 
 # ----------------------------------------------------------------- capture --
@@ -452,6 +459,10 @@ MODELS = {m.name: m for m in (
             objective=dict(kind='lowthrust_capture_propellant', **sc.record()),
             build=_build_dfd(name), decode=_decode_dfd,
             constrained=True, penalty='weighted', local='ipopt', polish_scale=sc.wet_mass_kg,
+            # Seeds from the penalised search are infeasible, and the nearest
+            # feasible trajectory can need a different launch date or a longer
+            # trip: pin them loosely (chemical seeds are already trajectories).
+            polish_band=0.20, polish_pad_days=180.0,
             tof_days=DFD_TOF_DAYS,
             launch_vinf_kms=[0.0, sc.launch_c3_km2s2 ** 0.5],
             assumptions=sc.record())
@@ -459,8 +470,11 @@ MODELS = {m.name: m for m in (
 )}
 
 # Constraint tolerance for constrained models: match-point residuals are
-# non-dimensional (1e-6 AU ~ 150 km, 1e-6 Earth orbital speed ~ 3 cm/s).
-C_TOL = 1e-6
+# non-dimensional, so 1e-5 is ~1500 km and ~0.3 m/s at a match point: far
+# below what a trajectory-correction manoeuvre or a higher-fidelity re-solve
+# removes anyway. Every point also records its actual residual (``violation``)
+# for stricter filtering later.
+C_TOL = 1e-5
 
 # ``weighted`` penalty weight per constraint: a residual of 1e-3 AU costs
 # ~100 kg of the propellant objective, steep enough to drive the global search

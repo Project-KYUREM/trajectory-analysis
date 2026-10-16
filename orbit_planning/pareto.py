@@ -182,8 +182,10 @@ def polish_front(points, args):
     The seeds come from the front (for a constrained model, from
     ``_penalised_seeds``: the least-penalised individual per cruise-time bin,
     so infeasible seeds are allowed).
-    Each chosen point is pinned to a narrow band around its own launch date and
-    cruise time, then locally minimised. Polished points are appended as new
+    Each chosen point is pinned to a band around its own launch date and cruise
+    time (``--polish-pad-days`` / ``--polish-band``; the model's defaults are
+    narrow for chemical models, wide for low-thrust ones whose seeds are not
+    yet trajectories), then locally minimised. Polished points are appended as new
     records and dominance is recomputed over the whole cloud.
 
     Args:
@@ -204,14 +206,17 @@ def polish_front(points, args):
                                                            min(args.polish, len(front)))})
     if not front or args.polish <= 0:
         return {'n_polished': 0}
+    launch_lo, launch_hi = (e.mjd2000 for e in mission.LAUNCH_WINDOW)
+    tof_lo, tof_hi = models.tof_bounds(args.model)
     jobs = []
     for k in picks:
         src = points[front[k]]
+        # the band, clipped to the model's own launch window and cruise bounds
         jobs.append(dict(model=args.model, sequence=args.sequence, x=src['x'],
-                         window_mjd2000=[src['x'][0] - args.polish_pad_days,
-                                         src['x'][0] + args.polish_pad_days],
-                         tof_days=[src['cruise_days'] * (1 - args.polish_band),
-                                   src['cruise_days'] * (1 + args.polish_band)],
+                         window_mjd2000=[max(src['x'][0] - args.polish_pad_days, launch_lo),
+                                         min(src['x'][0] + args.polish_pad_days, launch_hi)],
+                         tof_days=[max(src['cruise_days'] * (1 - args.polish_band), tof_lo),
+                                   min(src['cruise_days'] * (1 + args.polish_band), tof_hi)],
                          maxeval=args.polish_maxeval, stop=args.polish_stop))
 
     local = models.get(args.model).local.upper()
@@ -232,7 +237,8 @@ def polish_front(points, args):
             gains.append(gain)
         print(f"{k:3d}  {src['tof_days'] / 365.25:7.2f}  {r['before']:9.0f}  {r['after']:9.0f}  "
               f"{'   --' if gain is None else f'{gain:5.1f}'}%  {r['seconds']:6.1f}  "
-              f"{'yes' if r['feasible'] else 'NO'}")
+              f"{'yes' if r['feasible'] else 'NO'}"
+              f"{'  (solver error: ' + r['error'] + ')' if r.get('error') else ''}")
         points.append(_point(r['x'], score(r['x']), polished=True,
                              polished_from=front[k], slice=src.get('slice')))
 
@@ -256,11 +262,18 @@ def main():
     search.add_search_args(parser, islands=8, pop=100, gen=200, rounds=10)
     parser.add_argument('--polish', type=int, default=16, metavar='N',
                         help='MBH-polish N TOF-spanning front points (0 disables)')
-    parser.add_argument('--polish-band', type=float, default=0.03, dest='polish_band',
-                        help='fractional TOF band a polished point is pinned to')
-    parser.add_argument('--polish-pad-days', type=float, default=45.0, dest='polish_pad_days',
-                        help='launch-date half-window a polished point is pinned to')
+    parser.add_argument('--polish-band', type=float, default=None, dest='polish_band',
+                        help='fractional TOF band a polished point is pinned to '
+                             '(default: the model\'s, 0.03 chemical / 0.20 low-thrust)')
+    parser.add_argument('--polish-pad-days', type=float, default=None, dest='polish_pad_days',
+                        help='launch-date half-window a polished point is pinned to '
+                             '(default: the model\'s, 45 chemical / 180 low-thrust)')
     args = search.finish_args(parser.parse_args())
+    model = models.get(args.model)
+    if args.polish_band is None:
+        args.polish_band = model.polish_band
+    if args.polish_pad_days is None:
+        args.polish_pad_days = model.polish_pad_days
     out = search.output_path(args, 'pareto.json')
 
     points, wall = sweep(args) if args.sweep else optimise_front(args)

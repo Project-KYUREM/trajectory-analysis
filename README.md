@@ -114,14 +114,18 @@ cruise-time group, one per distinct launch day / cruise day) are only as
 diverse as the slices they come from. `models.PENALTY_WEIGHT` sets how hard
 the global stage is pushed towards feasibility. Every point carries `feasible` and
 `violation`; only feasible points can be on the front, and only feasible
-points are published. Expect only part of the polished seeds to close. In
-analytic-ephemeris tests with the eccentric-orbit capture, EJN closed 1 of 4
-seeds in each of three runs, and the others stopped at 1e-5 to 7e-4
-non-dimensional residual against the 1e-6 tolerance (`models.C_TOL`; 1e-5 is
-~1500 km and ~0.3 m/s at a match point). The small population's individuals
-sat at ~0.5 residual: the global stage only places the seeds, and the
-polish does the work. More seeds (`--polish`), more slices (`--sweep`) and
-more hops (`--polish-stop`) raise the yield. A polish of one point (MBH, 5 hops of up to 1000 IPOPT
+points are published. Expect only part of the polished seeds to close.
+Low-thrust seeds are polished in a wide band (±20 % cruise time, ±180 days of
+launch; the chemical models keep ±3 % and ±45 days) because a penalised seed
+is not yet a trajectory and the nearest feasible one can sit far from it,
+and "feasible" means residuals under 1e-5 (`models.C_TOL`, ~1500 km and
+~0.3 m/s at a match point). On 16 fixed seeds (analytic ephemerides, 4-island
+searches) that closed 5 of 8 EJN seeds (cheapest 5 530 kg of propellant,
+against 8 150 kg with the old narrow band) and 3 of 8 EVEJN seeds (against
+1 of 8), in less CPU time. Seeds that do not close mostly stall at residuals
+of 0.1-0.3 on longer sequences: the global stage only places the seeds and
+the polish does the work, so more seeds (`--polish`), more slices
+(`--sweep`) and more hops (`--polish-stop`) raise the yield. A polish of one point (MBH, 5 hops of up to 1000 IPOPT
 iterations) takes ~5–10 min for a 2-leg sequence on one core, more for longer
 ones, so `--polish 32` on 8 cores is roughly 30–50 min per sequence on top of
 the search. The first run of a vehicle also builds its capture table (~40 s
