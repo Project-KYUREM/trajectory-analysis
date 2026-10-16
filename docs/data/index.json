@@ -1733,6 +1733,27 @@
   },
   {
     "model": "dfd",
+    "sequence": "EEEN",
+    "labels": [
+      "Earth",
+      "Earth",
+      "Earth",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 10 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 10,
+    "n_front": 4,
+    "n_detail": 10,
+    "size_mb": 0.04,
+    "best_cost": 4880.337242095806,
+    "best_tof_years": 11.902036744101263,
+    "path": "data/dfd/EEEN/cloud.json"
+  },
+  {
+    "model": "dfd",
     "sequence": "EEESN",
     "labels": [
       "Earth",
@@ -1755,6 +1776,47 @@
   },
   {
     "model": "dfd",
+    "sequence": "EEJN",
+    "labels": [
+      "Earth",
+      "Earth",
+      "Jupiter",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 10 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 16,
+    "n_front": 5,
+    "n_detail": 16,
+    "size_mb": 0.06,
+    "best_cost": 5179.948477291235,
+    "best_tof_years": 11.756930349872531,
+    "path": "data/dfd/EEJN/cloud.json"
+  },
+  {
+    "model": "dfd",
+    "sequence": "EEN",
+    "labels": [
+      "Earth",
+      "Earth",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 10 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 11,
+    "n_front": 9,
+    "n_detail": 11,
+    "size_mb": 0.03,
+    "best_cost": 4800.336031518782,
+    "best_tof_years": 12.157463299676948,
+    "path": "data/dfd/EEN/cloud.json"
+  },
+  {
+    "model": "dfd",
     "sequence": "EESN",
     "labels": [
       "Earth",
@@ -1766,13 +1828,33 @@
     "cost_units": "kg",
     "counts": "cruise thrust + capture spiral, 10 N @ 10,000 s",
     "wet_mass_kg": 20000.0,
-    "n_points": 8,
+    "n_points": 14,
     "n_front": 5,
-    "n_detail": 8,
-    "size_mb": 0.03,
-    "best_cost": 5821.190201872047,
-    "best_tof_years": 15.102025074809728,
+    "n_detail": 14,
+    "size_mb": 0.05,
+    "best_cost": 4730.783344743069,
+    "best_tof_years": 13.50955216626378,
     "path": "data/dfd/EESN/cloud.json"
+  },
+  {
+    "model": "dfd",
+    "sequence": "EJN",
+    "labels": [
+      "Earth",
+      "Jupiter",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 10 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 12,
+    "n_front": 7,
+    "n_detail": 12,
+    "size_mb": 0.03,
+    "best_cost": 5319.367144748283,
+    "best_tof_years": 14.837749131739933,
+    "path": "data/dfd/EJN/cloud.json"
   },
   {
     "model": "dfd",
@@ -1787,13 +1869,34 @@
     "cost_units": "kg",
     "counts": "cruise thrust + capture spiral, 10 N @ 10,000 s",
     "wet_mass_kg": 20000.0,
-    "n_points": 10,
-    "n_front": 3,
-    "n_detail": 10,
-    "size_mb": 0.04,
-    "best_cost": 5963.909903166039,
-    "best_tof_years": 15.928890212970536,
+    "n_points": 18,
+    "n_front": 5,
+    "n_detail": 18,
+    "size_mb": 0.06,
+    "best_cost": 5042.692506234229,
+    "best_tof_years": 12.797090096939334,
     "path": "data/dfd/EJSN/cloud.json"
+  },
+  {
+    "model": "dfd",
+    "sequence": "EMJN",
+    "labels": [
+      "Earth",
+      "Mars",
+      "Jupiter",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 10 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 11,
+    "n_front": 7,
+    "n_detail": 11,
+    "size_mb": 0.04,
+    "best_cost": 5829.094980702619,
+    "best_tof_years": 14.423376669084272,
+    "path": "data/dfd/EMJN/cloud.json"
   },
   {
     "model": "dfd",
@@ -1809,13 +1912,53 @@
     "cost_units": "kg",
     "counts": "cruise thrust + capture spiral, 10 N @ 10,000 s",
     "wet_mass_kg": 20000.0,
-    "n_points": 7,
-    "n_front": 1,
-    "n_detail": 7,
-    "size_mb": 0.03,
-    "best_cost": 5240.099651133178,
-    "best_tof_years": 11.209523035883436,
+    "n_points": 13,
+    "n_front": 4,
+    "n_detail": 13,
+    "size_mb": 0.06,
+    "best_cost": 5180.326332463152,
+    "best_tof_years": 14.72529078337301,
     "path": "data/dfd/EMJSN/cloud.json"
+  },
+  {
+    "model": "dfd",
+    "sequence": "EMN",
+    "labels": [
+      "Earth",
+      "Mars",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 10 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 12,
+    "n_front": 8,
+    "n_detail": 12,
+    "size_mb": 0.03,
+    "best_cost": 5437.57455085354,
+    "best_tof_years": 12.3767158761286,
+    "path": "data/dfd/EMN/cloud.json"
+  },
+  {
+    "model": "dfd",
+    "sequence": "ESN",
+    "labels": [
+      "Earth",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 10 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 17,
+    "n_front": 4,
+    "n_detail": 17,
+    "size_mb": 0.04,
+    "best_cost": 5303.0430601115895,
+    "best_tof_years": 12.586117077657168,
+    "path": "data/dfd/ESN/cloud.json"
   },
   {
     "model": "dfd",
@@ -1867,6 +2010,28 @@
   },
   {
     "model": "dfd",
+    "sequence": "EVEJN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Earth",
+      "Jupiter",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 10 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 8,
+    "n_front": 3,
+    "n_detail": 8,
+    "size_mb": 0.04,
+    "best_cost": 5585.821789137452,
+    "best_tof_years": 12.729509196697055,
+    "path": "data/dfd/EVEJN/cloud.json"
+  },
+  {
+    "model": "dfd",
     "sequence": "EVEJSN",
     "labels": [
       "Earth",
@@ -1880,12 +2045,12 @@
     "cost_units": "kg",
     "counts": "cruise thrust + capture spiral, 10 N @ 10,000 s",
     "wet_mass_kg": 20000.0,
-    "n_points": 9,
-    "n_front": 3,
-    "n_detail": 9,
-    "size_mb": 0.05,
-    "best_cost": 6311.11940611202,
-    "best_tof_years": 12.523462502401237,
+    "n_points": 11,
+    "n_front": 4,
+    "n_detail": 11,
+    "size_mb": 0.06,
+    "best_cost": 5238.056262504973,
+    "best_tof_years": 15.375664311856031,
     "path": "data/dfd/EVEJSN/cloud.json"
   },
   {
@@ -1914,6 +2079,70 @@
   },
   {
     "model": "dfd",
+    "sequence": "EVJN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Jupiter",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 10 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 13,
+    "n_front": 3,
+    "n_detail": 13,
+    "size_mb": 0.05,
+    "best_cost": 5667.481069978134,
+    "best_tof_years": 10.886237206446873,
+    "path": "data/dfd/EVJN/cloud.json"
+  },
+  {
+    "model": "dfd",
+    "sequence": "EVJSN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Jupiter",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 10 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 15,
+    "n_front": 7,
+    "n_detail": 15,
+    "size_mb": 0.07,
+    "best_cost": 4526.213975822528,
+    "best_tof_years": 15.758037152429548,
+    "path": "data/dfd/EVJSN/cloud.json"
+  },
+  {
+    "model": "dfd",
+    "sequence": "EVSN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 10 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 9,
+    "n_front": 4,
+    "n_detail": 9,
+    "size_mb": 0.03,
+    "best_cost": 5259.638619179121,
+    "best_tof_years": 15.72094956982609,
+    "path": "data/dfd/EVSN/cloud.json"
+  },
+  {
+    "model": "dfd",
     "sequence": "EVVEESN",
     "labels": [
       "Earth",
@@ -1928,12 +2157,12 @@
     "cost_units": "kg",
     "counts": "cruise thrust + capture spiral, 10 N @ 10,000 s",
     "wet_mass_kg": 20000.0,
-    "n_points": 5,
-    "n_front": 4,
-    "n_detail": 5,
-    "size_mb": 0.04,
-    "best_cost": 8680.550031357989,
-    "best_tof_years": 15.461899556694735,
+    "n_points": 7,
+    "n_front": 3,
+    "n_detail": 7,
+    "size_mb": 0.05,
+    "best_cost": 5585.726537579745,
+    "best_tof_years": 14.199569204649169,
     "path": "data/dfd/EVVEESN/cloud.json"
   },
   {
@@ -1959,6 +2188,28 @@
     "best_cost": 7290.202797239308,
     "best_tof_years": 13.427197078398825,
     "path": "data/dfd/EVVEJSN/cloud.json"
+  },
+  {
+    "model": "dfd",
+    "sequence": "EVVJN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Venus",
+      "Jupiter",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 10 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 10,
+    "n_front": 3,
+    "n_detail": 10,
+    "size_mb": 0.05,
+    "best_cost": 6493.790493054143,
+    "best_tof_years": 14.593134142713675,
+    "path": "data/dfd/EVVJN/cloud.json"
   },
   {
     "model": "dfd",
@@ -2067,9 +2318,71 @@
     "n_front": 2,
     "n_detail": 2,
     "size_mb": 0.01,
-    "best_cost": 5160.473073136132,
-    "best_tof_years": 15.537067256249152,
+    "best_cost": 4581.865273387926,
+    "best_tof_years": 16.250864994461523,
     "path": "data/dfd-1mw/EEEN/cloud.json"
+  },
+  {
+    "model": "dfd-1mw",
+    "sequence": "EEJN",
+    "labels": [
+      "Earth",
+      "Earth",
+      "Jupiter",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 5 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 4,
+    "n_front": 4,
+    "n_detail": 4,
+    "size_mb": 0.02,
+    "best_cost": 4864.136191135212,
+    "best_tof_years": 16.519495226815714,
+    "path": "data/dfd-1mw/EEJN/cloud.json"
+  },
+  {
+    "model": "dfd-1mw",
+    "sequence": "EEN",
+    "labels": [
+      "Earth",
+      "Earth",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 5 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 8,
+    "n_front": 7,
+    "n_detail": 8,
+    "size_mb": 0.02,
+    "best_cost": 4392.854363800534,
+    "best_tof_years": 16.590652251078165,
+    "path": "data/dfd-1mw/EEN/cloud.json"
+  },
+  {
+    "model": "dfd-1mw",
+    "sequence": "EESN",
+    "labels": [
+      "Earth",
+      "Earth",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 5 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 4,
+    "n_front": 2,
+    "n_detail": 4,
+    "size_mb": 0.02,
+    "best_cost": 5719.456140134904,
+    "best_tof_years": 14.399427981599718,
+    "path": "data/dfd-1mw/EESN/cloud.json"
   },
   {
     "model": "dfd-1mw",
@@ -2083,12 +2396,12 @@
     "cost_units": "kg",
     "counts": "cruise thrust + capture spiral, 5 N @ 10,000 s",
     "wet_mass_kg": 20000.0,
-    "n_points": 2,
+    "n_points": 4,
     "n_front": 2,
-    "n_detail": 2,
+    "n_detail": 4,
     "size_mb": 0.01,
-    "best_cost": 8792.746504320176,
-    "best_tof_years": 14.38758578680106,
+    "best_cost": 5280.519091342398,
+    "best_tof_years": 15.057996563635319,
     "path": "data/dfd-1mw/EJN/cloud.json"
   },
   {
@@ -2104,13 +2417,76 @@
     "cost_units": "kg",
     "counts": "cruise thrust + capture spiral, 5 N @ 10,000 s",
     "wet_mass_kg": 20000.0,
-    "n_points": 4,
-    "n_front": 3,
-    "n_detail": 4,
-    "size_mb": 0.02,
-    "best_cost": 5020.758995046452,
-    "best_tof_years": 14.860934144425297,
+    "n_points": 13,
+    "n_front": 6,
+    "n_detail": 13,
+    "size_mb": 0.05,
+    "best_cost": 4576.860264142913,
+    "best_tof_years": 16.43779106011179,
     "path": "data/dfd-1mw/EJSN/cloud.json"
+  },
+  {
+    "model": "dfd-1mw",
+    "sequence": "EMJN",
+    "labels": [
+      "Earth",
+      "Mars",
+      "Jupiter",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 5 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 3,
+    "n_front": 2,
+    "n_detail": 3,
+    "size_mb": 0.01,
+    "best_cost": 4944.106403226046,
+    "best_tof_years": 16.554341751344325,
+    "path": "data/dfd-1mw/EMJN/cloud.json"
+  },
+  {
+    "model": "dfd-1mw",
+    "sequence": "EMJSN",
+    "labels": [
+      "Earth",
+      "Mars",
+      "Jupiter",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 5 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 13,
+    "n_front": 6,
+    "n_detail": 13,
+    "size_mb": 0.06,
+    "best_cost": 5076.302114257382,
+    "best_tof_years": 16.57294344078357,
+    "path": "data/dfd-1mw/EMJSN/cloud.json"
+  },
+  {
+    "model": "dfd-1mw",
+    "sequence": "EMN",
+    "labels": [
+      "Earth",
+      "Mars",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 5 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 5,
+    "n_front": 3,
+    "n_detail": 5,
+    "size_mb": 0.01,
+    "best_cost": 4674.64110486762,
+    "best_tof_years": 16.315459963306076,
+    "path": "data/dfd-1mw/EMN/cloud.json"
   },
   {
     "model": "dfd-1mw",
@@ -2124,12 +2500,12 @@
     "cost_units": "kg",
     "counts": "cruise thrust + capture spiral, 5 N @ 10,000 s",
     "wet_mass_kg": 20000.0,
-    "n_points": 2,
-    "n_front": 2,
-    "n_detail": 2,
-    "size_mb": 0.01,
-    "best_cost": 6393.700181526681,
-    "best_tof_years": 12.894901329817799,
+    "n_points": 6,
+    "n_front": 3,
+    "n_detail": 6,
+    "size_mb": 0.02,
+    "best_cost": 5108.172984752033,
+    "best_tof_years": 16.300484738463933,
     "path": "data/dfd-1mw/ESN/cloud.json"
   },
   {
@@ -2154,6 +2530,28 @@
     "best_cost": 7342.07418852786,
     "best_tof_years": 16.6672810360134,
     "path": "data/dfd-1mw/EVEESN/cloud.json"
+  },
+  {
+    "model": "dfd-1mw",
+    "sequence": "EVEJN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Earth",
+      "Jupiter",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 5 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 2,
+    "n_front": 2,
+    "n_detail": 2,
+    "size_mb": 0.01,
+    "best_cost": 5309.455942997574,
+    "best_tof_years": 14.761887224753139,
+    "path": "data/dfd-1mw/EVEJN/cloud.json"
   },
   {
     "model": "dfd-1mw",
@@ -2215,13 +2613,35 @@
     "cost_units": "kg",
     "counts": "cruise thrust + capture spiral, 5 N @ 10,000 s",
     "wet_mass_kg": 20000.0,
-    "n_points": 1,
-    "n_front": 1,
-    "n_detail": 1,
-    "size_mb": 0.01,
-    "best_cost": 5920.2122815262155,
-    "best_tof_years": 13.28320603766963,
+    "n_points": 5,
+    "n_front": 2,
+    "n_detail": 5,
+    "size_mb": 0.02,
+    "best_cost": 6552.536548214539,
+    "best_tof_years": 16.383166416849555,
     "path": "data/dfd-1mw/EVJN/cloud.json"
+  },
+  {
+    "model": "dfd-1mw",
+    "sequence": "EVJSN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Jupiter",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 5 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 3,
+    "n_front": 3,
+    "n_detail": 3,
+    "size_mb": 0.02,
+    "best_cost": 4874.050004676275,
+    "best_tof_years": 16.556963617906103,
+    "path": "data/dfd-1mw/EVJSN/cloud.json"
   },
   {
     "model": "dfd-1mw",
@@ -2245,6 +2665,27 @@
     "best_cost": 7178.170319109322,
     "best_tof_years": 14.669740823411603,
     "path": "data/dfd-1mw/EVMJSN/cloud.json"
+  },
+  {
+    "model": "dfd-1mw",
+    "sequence": "EVSN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Saturn",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 5 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 1,
+    "n_front": 1,
+    "n_detail": 1,
+    "size_mb": 0.01,
+    "best_cost": 6884.350681391326,
+    "best_tof_years": 12.287998414862516,
+    "path": "data/dfd-1mw/EVSN/cloud.json"
   },
   {
     "model": "dfd-1mw",
@@ -2317,6 +2758,28 @@
     "best_cost": 9678.661472278412,
     "best_tof_years": 14.111657641104436,
     "path": "data/dfd-1mw/EVVEMJN/cloud.json"
+  },
+  {
+    "model": "dfd-1mw",
+    "sequence": "EVVJN",
+    "labels": [
+      "Earth",
+      "Venus",
+      "Venus",
+      "Jupiter",
+      "Neptune"
+    ],
+    "cost_label": "Propellant",
+    "cost_units": "kg",
+    "counts": "cruise thrust + capture spiral, 5 N @ 10,000 s",
+    "wet_mass_kg": 20000.0,
+    "n_points": 1,
+    "n_front": 1,
+    "n_detail": 1,
+    "size_mb": 0.01,
+    "best_cost": 6013.2162544534895,
+    "best_tof_years": 16.48328664980059,
+    "path": "data/dfd-1mw/EVVJN/cloud.json"
   },
   {
     "model": "dfd-1mw",
