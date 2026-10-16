@@ -3,10 +3,15 @@
 This module imports neither SPICE nor pykep, so ``batch.py`` uses it without
 loading kernels.
 """
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = ROOT / "data"            # SPICE kernels (gitignored; scripts/fetch_kernels.sh)
+# SPICE kernels (gitignored; scripts/fetch_kernels.sh). KYUREM_DATA_DIR points
+# elsewhere: every ephemeris lookup reads de440.bsp, and on a network or
+# parallel filesystem (a cluster's /scratch) a node full of searches doing
+# that sits in kernel time; a node-local copy (e.g. /dev/shm) avoids it.
+DATA_DIR = Path(os.environ.get("KYUREM_DATA_DIR") or ROOT / "data")
 RESULTS_DIR = ROOT / "results"      # raw search output (gitignored, large)
 DOCS_DIR = ROOT / "docs"            # the static site
 DOCS_DATA_DIR = DOCS_DIR / "data"   # compacted site payload (committed)

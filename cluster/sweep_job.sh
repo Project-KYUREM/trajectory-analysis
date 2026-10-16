@@ -9,7 +9,7 @@ cd /scratch/user/juandurante/git/trajectory-analysis
 export PYTHON=/home/juandurante/miniconda3/envs/orbital_env/bin/python
 export MODELS="capture ballistic"
 export WORKERS=8
-export PYTHONBUFFERED=1
+export PYTHONUNBUFFERED=1                 # live per-slice progress in results/<model>/logs/
 export JOBS=$(( $(nproc) / WORKERS ))     # 128 cores -> 16 sequences at once
 echo "node $(hostname): $(nproc) cores, JOBS=$JOBS x WORKERS=$WORKERS"
 
